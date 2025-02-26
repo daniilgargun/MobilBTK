@@ -1,16 +1,28 @@
-# untitled2
+# БТК Расписание
 
-A new Flutter project.
+Мобильное приложение для просмотра расписания занятий БТК.
 
-## Getting Started
+## Функционал
 
-This project is a starting point for a Flutter application.
+- Просмотр текущего расписания
+- Поиск по группам и преподавателям
+- Работа в офлайн режиме
+- Календарь с заметками
+- Уведомления об изменениях
 
-A few resources to get you started if this is your first Flutter project:
+## Требования
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+- Flutter SDK: ^3.6.2
+- Dart SDK: ^3.6.2
+- Android: minSdkVersion 28
+- iOS: iOS 11.0 или выше
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Установка
+
+1. Клонируйте репозиторий
+2. Выполните `flutter pub get`
+3. Запустите `flutter run`
+
+## Разработчик
+
+Gargun Daniil
