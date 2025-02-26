@@ -228,6 +228,22 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Определяем текущую тему
+    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    
+    // Цвета для кнопки обновления
+    final buttonColor = isDarkMode 
+        ? const Color(0xFF194874).withOpacity(0.8)
+        : Colors.white;
+    
+    // Цвета для индикаторов
+    final activeIndicatorColor = isDarkMode 
+        ? Colors.white 
+        : const Color(0xFF194874);
+    final inactiveIndicatorColor = isDarkMode 
+        ? Colors.white.withOpacity(0.3)
+        : const Color(0xFF194874).withOpacity(0.3);
+
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.surface,
       appBar: AppBar(
@@ -403,7 +419,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                                   decoration: BoxDecoration(
-                                    color: Colors.black.withOpacity(0.6),
+                                    color: isDarkMode 
+                                      ? Colors.black.withOpacity(0.6)
+                                      : Colors.white.withOpacity(0.6),
                                     borderRadius: BorderRadius.circular(30),
                                   ),
                                   child: Row(
@@ -437,7 +455,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                                             decoration: BoxDecoration(
                                               color: isCurrentPage 
                                                 ? const Color(0xFF2195F1) // Синий цвет для активной точки
-                                                : const Color(0xFF12293F).withOpacity(0.5), // Полупрозрачный синий для неактивных
+                                                : isDarkMode
+                                                  ? const Color(0xFF12293F).withOpacity(0.5) // Темная тема
+                                                  : const Color(0xFFE3E3E3), // Светлая тема
                                               shape: BoxShape.circle,
                                             ),
                                           );
@@ -451,7 +471,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                                             decoration: BoxDecoration(
                                               color: _currentPage == index 
                                                 ? const Color(0xFF2195F1) // Синий цвет для активной точки
-                                                : const Color(0xFF194874).withOpacity(0.5), // Полупрозрачный синий для неактивных
+                                                : isDarkMode
+                                                  ? const Color(0xFF194874).withOpacity(0.5) // Темная тема
+                                                  : const Color(0xFFE3E3E3), // Светлая тема
                                               shape: BoxShape.circle,
                                             ),
                                           );
@@ -477,18 +499,17 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         children: [
           Consumer<ScheduleProvider>(
             builder: (context, provider, child) {
-              developer.log('Состояние кнопки обновления:', error: {
-                'Офлайн режим': provider.isOffline,
-                'Доступность кнопки': !provider.isOffline,
-              });
-              
               return FloatingActionButton(
                 heroTag: "refreshBtn",
                 onPressed: provider.isOffline ? null : () => provider.updateSchedule(),
                 backgroundColor: provider.isOffline 
                     ? Colors.grey 
-                    : const Color(0xFF194874).withOpacity(0.8),
-                child: const Icon(Icons.refresh),
+                    : buttonColor,
+                elevation: 4,
+                child: Icon(
+                  Icons.refresh,
+                  color: isDarkMode ? Colors.white : const Color(0xFF194874),
+                ),
               );
             },
           ),

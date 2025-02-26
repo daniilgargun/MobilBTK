@@ -4,6 +4,7 @@ import 'package:html/dom.dart';
 import '../models/schedule_model.dart';
 import 'database_service.dart';
 import 'dart:developer' as developer;
+import 'package:flutter/foundation.dart';
 
 class ParserService {
   final String url = "https://bartc.by/index.php/obuchayushchemusya/dnevnoe-otdelenie/tekushchee-raspisanie";
@@ -29,65 +30,54 @@ class ParserService {
     _lastLoadTime = DateTime.now();
 
     try {
-      developer.log('Начало загрузки расписания');
-      
-      final client = http.Client();
-      final response = await client.get(
-        Uri.parse(url),
-        headers: {
-          'Connection': 'keep-alive',
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache',
-          'Expires': '0',
-        },
-      ).timeout(const Duration(seconds: 10));
-      client.close();
-      
-      if (response.statusCode != 200) {
-        developer.log('Ошибка HTTP: ${response.statusCode}');
-        return (null, <String>[], <String>[], "❌ Ошибка получения расписания");
+      debugPrint('🔄 Начало парсинга расписания');
+      final response = await http.get(Uri.parse(url));
+      debugPrint('📥 Получен ответ от сервера: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final document = html.parse(response.body);
+        debugPrint('📄 Документ успешно распарсен');
+        
+        final tables = document.getElementsByTagName('table');
+        
+        if (tables.isEmpty) {
+          developer.log('Таблицы с расписанием не найдены');
+          return (null, <String>[], <String>[], "❌ Расписание не найдено");
+        }
+
+        final scheduleData = <String, Map<String, List<ScheduleItem>>>{};
+        final groupSet = <String>{};
+        final teacherSet = <String>{};
+
+        for (var table in tables) {
+          _parseTable(table, scheduleData, groupSet, teacherSet);
+          // Даем время другим операциям
+          await Future.delayed(const Duration(milliseconds: 1));
+        }
+
+        if (scheduleData.isEmpty) {
+          developer.log('Расписание пустое');
+          return (null, <String>[], <String>[], "❌ Расписание пустое");
+        }
+
+        developer.log(
+          'Расписание успешно загружено',
+          error: {
+            'Дней': scheduleData.length,
+            'Групп': groupSet.length,
+            'Преподавателей': teacherSet.length,
+          },
+        );
+
+        debugPrint('✅ Парсинг успешно завершен');
+        return (scheduleData, groupSet.toList()..sort(), teacherSet.toList()..sort(), null);
+      } else {
+        debugPrint('❌ Ошибка HTTP: ${response.statusCode}');
+        return (null, <String>[], <String>[], 'Ошибка загрузки данных: ${response.statusCode}');
       }
-
-      final document = html.parse(response.body);
-      final tables = document.getElementsByTagName('table');
-      
-      if (tables.isEmpty) {
-        developer.log('Таблицы с расписанием не найдены');
-        return (null, <String>[], <String>[], "❌ Расписание не найдено");
-      }
-
-      final scheduleData = <String, Map<String, List<ScheduleItem>>>{};
-      final groupSet = <String>{};
-      final teacherSet = <String>{};
-
-      for (var table in tables) {
-        _parseTable(table, scheduleData, groupSet, teacherSet);
-        // Даем время другим операциям
-        await Future.delayed(const Duration(milliseconds: 1));
-      }
-
-      if (scheduleData.isEmpty) {
-        developer.log('Расписание пустое');
-        return (null, <String>[], <String>[], "❌ Расписание пустое");
-      }
-
-      developer.log(
-        'Расписание успешно загружено',
-        error: {
-          'Дней': scheduleData.length,
-          'Групп': groupSet.length,
-          'Преподавателей': teacherSet.length,
-        },
-      );
-
-      return (scheduleData, groupSet.toList()..sort(), teacherSet.toList()..sort(), null);
-    } catch (e, stackTrace) {
-      developer.log(
-        'Ошибка при загрузке расписания',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      return (null, <String>[], <String>[], "❌ Ошибка при получении расписания. Попробуйте позже.");
+    } catch (e) {
+      debugPrint('❌ Ошибка парсинга: $e');
+      return (null, <String>[], <String>[], 'Ошибка обработки данных: $e');
     } finally {
       _isLoading = false;
     }

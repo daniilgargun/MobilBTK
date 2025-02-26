@@ -133,12 +133,19 @@ class ScheduleProvider extends ChangeNotifier {
   }
 
   Future<void> updateSchedule({bool silent = false}) async {
+    debugPrint('🔄 Запрос на обновление расписания');
+    debugPrint('Тихий режим: $silent');
+    debugPrint('Офлайн режим: $_isOffline');
+
     final connectivityService = ConnectivityService();
     final isOnline = await connectivityService.isOnline();
     
+    debugPrint('📡 Статус подключения: ${isOnline ? "онлайн" : "офлайн"}');
+
     if (!isOnline) {
       _isOffline = true;
       notifyListeners();
+      debugPrint('❌ Нет подключения к интернету');
       return;
     }
 
@@ -165,6 +172,7 @@ class ScheduleProvider extends ChangeNotifier {
     
     try {
       final result = await compute(_parseScheduleIsolate, _parser.url);
+      debugPrint('📦 Результат парсинга: ${result.$1 != null ? "успешно" : "ошибка"}');
       
       if (result.$1 != null) {
         await _db.saveSchedule(result.$1!);
@@ -188,12 +196,8 @@ class ScheduleProvider extends ChangeNotifier {
           details: result.$4,
         );
       }
-    } catch (e, stackTrace) {
-      developer.log(
-        'Ошибка при обновлении расписания',
-        error: e,
-        stackTrace: stackTrace,
-      );
+    } catch (e) {
+      debugPrint('❌ Ошибка обновления: $e');
       _handleError(
         'Ошибка обновления',
         details: 'Проверьте подключение к интернету и попробуйте снова',

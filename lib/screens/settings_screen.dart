@@ -21,7 +21,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isLoading = true;
   String _appVersion = '';
   int _storageDays = 30;
-  bool _showNotifications = true;
   String _lastUpdateInfo = '';
   Map<String, String> _cacheInfo = {};
   bool _showCacheDetails = false;
@@ -40,7 +39,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _isDarkMode = prefs.getBool('is_dark_mode');
       _storageDays = prefs.getInt('schedule_storage_days') ?? 30;
-      _showNotifications = prefs.getBool('show_notifications') ?? true;
       _isLoading = false;
     });
   }
@@ -198,22 +196,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const Divider(),
 
-          // Секция уведомлений
-          _buildSectionHeader('Уведомления'),
-          SwitchListTile(
-            title: const Text('Уведомления'),
-            subtitle: const Text('Показывать уведомления о заданиях'),
-            value: _showNotifications,
-            onChanged: (value) async {
-              final prefs = await SharedPreferences.getInstance();
-              setState(() {
-                _showNotifications = value;
-              });
-              await prefs.setBool('show_notifications', value);
-            },
-          ),
-          const Divider(),
-
           // Секция управления данными
           _buildSectionHeader('Управление данными'),
           ListTile(
@@ -267,11 +249,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
           ),
           ListTile(
-            title: const Text('Телеграм-бот'),
+            title: const Text('Telegram-бот'),
             subtitle: const Text('@BTKraspbot'),
-            onTap: () {
-              _launchUrl('tg://resolve?domain=BTKraspbot');
-            },
+            onTap: () => _launchUrl('https://t.me/BTKraspbot'),
           ),
           ListTile(
             title: const Text('Версия'),
@@ -321,16 +301,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await prefs.setInt('schedule_storage_days', days);
   }
 
-  Future<void> _launchUrl(String url) async {
-    if (!await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication)) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Не удалось открыть ссылку')),
-        );
+  Future<void> _launchUrl(String urlString) async {
+    final Uri url = Uri.parse(urlString);
+    
+    if (urlString.startsWith('https://t.me/')) {
+      try {
+        final telegramUrl = Uri.parse('tg://resolve?domain=${urlString.split('/').last}');
+        if (await canLaunchUrl(telegramUrl)) {
+          await launchUrl(telegramUrl);
+          return;
+        }
+      } catch (e) {
+        debugPrint('Ошибка открытия Telegram: $e');
       }
     }
+    
+    try {
+      await launchUrl(
+        url,
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (e) {
+      debugPrint('Ошибка открытия ссылки: $e');
+    }
   }
-
   void _showDeveloperInfo() {
     showDialog(
       context: context,
@@ -340,21 +334,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Gargun Daniil(383)'),
-            const SizedBox(height: 8),
+            const Text(
+              'Gargun Daniil(383)',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold
+              ),
+            ),
             const SizedBox(height: 16),
             InkWell(
               onTap: () => _launchUrl('tg://resolve?domain=Daniilgargun'),
-              child: Row(
-                children: [
-                  Icon(Icons.telegram, color: Theme.of(context).colorScheme.primary),
-                  const SizedBox(width: 8),
-                  const Text('@Daniilgargun', 
-                    style: TextStyle(
-                      decoration: TextDecoration.underline,
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.telegram,
+                      color: Theme.of(context).colorScheme.primary,
+                      size: 24,
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 8),
+                    Text(
+                      '@Daniilgargun',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
