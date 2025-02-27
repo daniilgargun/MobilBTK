@@ -19,14 +19,21 @@ class BellScheduleDialog extends StatelessWidget {
               ),
             ),
           ),
-          // Времена в два ряда
+          // Времена в два ряда с монопространственным шрифтом
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(time1),
-                Text(time2),
-              ],
+            child: DefaultTextStyle(
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 14,
+                height: 1.2,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(time1),
+                  Text(time2),
+                ],
+              ),
             ),
           ),
         ],
@@ -74,27 +81,55 @@ class BellScheduleDialog extends StatelessWidget {
                 _buildDaySchedule(
                   context, 
                   'Понедельник, среда, пятница', 
-                  LessonTime.lessonTimes['normal']!,
+                  [
+                    ('1)', '8:00-8:45', '8:55-9:40'),
+                    ('2)', '9:50-10:35', '11:00-11:45'),
+                    ('3)', '12:20-13:05', '13:15-14:00'),
+                    ('4)', '14:10-14:55', '15:05-15:50'),
+                    ('5)', '16:00-16:45', '16:55-17:40'),
+                    ('6)', '17:50-18:35', '18:40-19:25'),
+                  ],
                 ),
                 const SizedBox(height: 16),
                 _buildDaySchedule(
                   context, 
                   'Вторник', 
-                  LessonTime.lessonTimes['tuesday']!,
+                  [
+                    ('1)', '8:00-8:45', '8:55-9:40'),
+                    ('2)', '9:50-10:35', '11:00-11:45'),
+                    ('3)', '12:20-13:05', '13:15-14:00'),
+                    ('4)', '15:05-15:50', '16:00-16:45'),
+                    ('5)', '16:55-17:40', '17:50-18:35'),
+                    ('6)', '18:45-19:30', '19:35-20:20'),
+                  ],
                   specialHour: 'Классный час: 14:10-14:55',
                 ),
                 const SizedBox(height: 16),
                 _buildDaySchedule(
                   context, 
                   'Четверг', 
-                  LessonTime.lessonTimes['thursday']!,
-                  specialHour: 'Час информации: 14:10-14:35',
+                  [
+                    ('1)', '8:00-8:45', '8:55-9:40'),
+                    ('2)', '9:50-10:35', '11:00-11:45'),
+                    ('3)', '12:20-13:05', '13:15-14:00'),
+                    ('4)', '14:45-15:30', '15:40-16:25'),
+                    ('5)', '16:35-17:20', '17:30-18:15'),
+                    ('6)', '18:25-19:10', '19:15-20:00'),
+                  ],
+                  specialHour: 'Часы информации: 14:10-14:35',
                 ),
                 const SizedBox(height: 16),
                 _buildDaySchedule(
                   context, 
                   'Суббота', 
-                  LessonTime.lessonTimes['saturday']!,
+                  [
+                    ('1)', '8:00-8:45', '8:55-9:40'),
+                    ('2)', '9:50-10:35', '10:45-11:30'),
+                    ('3)', '11:50-12:35', '12:40-13:25'),
+                    ('4)', '13:35-14:20', '14:25-15:10'),
+                    ('5)', '15:20-16:05', '16:10-16:55'),
+                    ('6)', '17:05-17:50', '17:55-18:40'),
+                  ],
                 ),
               ],
             ),
@@ -104,7 +139,7 @@ class BellScheduleDialog extends StatelessWidget {
     );
   }
 
-  Widget _buildDaySchedule(BuildContext context, String title, List<LessonTime> times, {String? specialHour}) {
+  Widget _buildDaySchedule(BuildContext context, String title, List<(String, String, String)> times, {String? specialHour}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -125,55 +160,29 @@ class BellScheduleDialog extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 5),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Левая колонка (1-3 пары)
-            Expanded(
-              child: Column(
-                children: [
-                  _buildTimeRow(
-                    '1 пар',
-                    '8:00-8:45',
-                    '8:55-9:40',
-                  ),
-                  _buildTimeRow(
-                    '2 пар',
-                    '9:50-10:35',
-                    '11:00-11:45',
-                  ),
-                  _buildTimeRow(
-                    '3 пар',
-                    '12:20-13:05',
-                    '13:15-14:00',
-                  ),
-                ],
+        IntrinsicHeight( // Добавляем для выравнивания высоты колонок
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Левая колонка (1-3 пары)
+              Expanded(
+                child: Column(
+                  children: times.take(3).map((time) => 
+                    _buildTimeRow(time.$1, time.$2, time.$3)
+                  ).toList(),
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            // Правая колонка (4-6 пары)
-            Expanded(
-              child: Column(
-                children: [
-                  _buildTimeRow(
-                    '4 пар',
-                    '14:10-14:55',
-                    '15:05-15:50',
-                  ),
-                  _buildTimeRow(
-                    '5 пар',
-                    '16:00-16:45',
-                    '16:55-17:40',
-                  ),
-                  _buildTimeRow(
-                    '6 пар',
-                    '17:50-18:35',
-                    '18:40-19:25',
-                  ),
-                ],
+              const SizedBox(width: 16), // Увеличиваем расстояние между колонками
+              // Правая колонка (4-6 пары)
+              Expanded(
+                child: Column(
+                  children: times.skip(3).take(3).map((time) => 
+                    _buildTimeRow(time.$1, time.$2, time.$3)
+                  ).toList(),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
         if (specialHour != null)
           Container(

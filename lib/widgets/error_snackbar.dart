@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:awesome_snackbar_content/awesome_snackbar_content.dart';
 
 class CustomSnackBar {
+  // Всплывающие уведомления разных типов
+  // Использую библиотеку awesome_snackbar_content для красивого дизайна
+
+  // Показывает уведомление с заголовком и текстом
   static void show({
     required BuildContext context,
     required String title,
@@ -24,6 +28,7 @@ class CustomSnackBar {
       ..showSnackBar(snackBar);
   }
 
+  // Красное уведомление для ошибок
   static void showError(BuildContext context, String message) {
     show(
       context: context,
@@ -33,6 +38,7 @@ class CustomSnackBar {
     );
   }
 
+  // Зеленое уведомление для успешных действий
   static void showSuccess(BuildContext context, String message) {
     show(
       context: context,
@@ -42,6 +48,7 @@ class CustomSnackBar {
     );
   }
 
+  // Желтое уведомление для предупреждений
   static void showWarning(BuildContext context, String message) {
     show(
       context: context,
@@ -51,6 +58,7 @@ class CustomSnackBar {
     );
   }
 
+  // Показывает предупреждение что нет интернета
   static void showOfflineMode(BuildContext context) {
     showWarning(
       context,

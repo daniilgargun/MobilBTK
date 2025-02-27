@@ -35,6 +35,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _calculateCacheSize();
   }
 
+  // Загружаем настройки из памяти телефона
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
@@ -44,6 +45,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
+  // Получаем версию приложения
   Future<void> _loadAppVersion() async {
     final packageInfo = await PackageInfo.fromPlatform();
     setState(() {
@@ -51,6 +53,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
+  // Смотрим когда последний раз обновляли расписание
   Future<void> _loadLastUpdateInfo() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -85,6 +88,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  // Считаем сколько места занимает приложение
   Future<void> _calculateCacheSize() async {
     try {
       final dbDir = await getDatabasesPath();
@@ -116,6 +120,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  // Считаем общий размер всех данных
   Future<int> _calculateTotalCacheSize() async {
     int totalSize = 0;
     
@@ -139,6 +144,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return totalSize;
   }
 
+  // Переводит байты в нормальный размер (КБ, МБ)
   String _formatSize(int bytes) {
     if (bytes < 1024) {
       return '$bytes Б';
@@ -290,6 +296,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // Делает заголовки разделов в настройках
   Widget _buildSectionHeader(String title) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
@@ -304,6 +311,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // Переключает темную тему
   Future<void> toggleTheme() async {
     final prefs = await SharedPreferences.getInstance();
     final newValue = !(_isDarkMode ?? false);
@@ -321,6 +329,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  // Обновляет количество дней хранения расписания
   Future<void> _updateStorageDays(int days) async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
@@ -329,6 +338,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await prefs.setInt('schedule_storage_days', days);
   }
 
+  // Открывает ссылки (сайт колледжа и телеграм)
   Future<void> _launchUrl(String urlString) async {
     final Uri url = Uri.parse(urlString);
     
@@ -353,6 +363,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       debugPrint('Ошибка открытия ссылки: $e');
     }
   }
+
+  // Показывает инфу обо мне
   void _showDeveloperInfo() {
     showDialog(
       context: context,
@@ -411,6 +423,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // Диалог очистки кэша
+  // Можно выбрать что удалить
   Future<void> _showClearCacheDialog() async {
     final result = await showDialog<Map<String, bool>>(
       context: context,

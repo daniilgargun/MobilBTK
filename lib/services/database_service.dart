@@ -5,6 +5,9 @@ import '../models/note_model.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+// Работа с базой данных SQLite
+// Храним тут расписание, заметки и настройки
+
 class DatabaseService {
   static Database? _database;
   static const int _databaseVersion = 2;
@@ -16,6 +19,7 @@ class DatabaseService {
     return _database!;
   }
 
+  // Создаем/открываем базу
   Future<Database> _initDB() async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, 'schedule.db');
@@ -29,6 +33,7 @@ class DatabaseService {
     );
   }
 
+  // Создаем все таблицы
   Future<void> _createTables(Database db) async {
     await db.execute('''
       CREATE TABLE current_schedule (
@@ -94,6 +99,7 @@ class DatabaseService {
     });
   }
 
+  // Сохраняем текущее расписание
   Future<void> saveCurrentSchedule(Map<String, Map<String, List<ScheduleItem>>> scheduleData) async {
     final db = await database;
     await db.transaction((txn) async {
@@ -117,6 +123,7 @@ class DatabaseService {
     });
   }
 
+  // Переносим старое расписание в архив
   Future<void> archiveSchedule(Map<String, Map<String, List<ScheduleItem>>> scheduleData) async {
     final db = await database;
     
@@ -241,6 +248,8 @@ class DatabaseService {
     }
   }
 
+  // Чистим старые записи из архива
+  // Оставляем только за последние N дней
   Future<void> cleanOldArchive(int days) async {
     final db = await database;
     final cutoffDate = DateTime.now().subtract(Duration(days: days));
@@ -264,6 +273,8 @@ class DatabaseService {
     }
   }
 
+  // Переводит строку с датой в DateTime
+  // Например "01-март" -> DateTime
   DateTime _parseDate(String dateStr) {
     final parts = dateStr.split('-');
     if (parts.length != 2) {
@@ -325,6 +336,11 @@ class DatabaseService {
     }
   }
 
+  // Проверяет надо ли обновить расписание
+  // Обновляем если:
+  // - прошло больше 3 часов
+  // - новый день
+  // - нет сохраненного расписания
   Future<bool> shouldUpdateSchedule() async {
     try {
       final now = DateTime.now();

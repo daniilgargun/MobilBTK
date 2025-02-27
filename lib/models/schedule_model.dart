@@ -1,3 +1,11 @@
+// Модель для одной пары в расписании
+// Хранит всю инфу о паре:
+// - группа
+// - номер пары
+// - подгруппа (если есть)
+// - предмет
+// - препод
+// - кабинет
 class ScheduleItem {
   final String group;
   final int lessonNumber;
@@ -15,6 +23,7 @@ class ScheduleItem {
     required this.classroom,
   });
 
+  // Для сохранения в базу
   Map<String, dynamic> toMap() {
     return {
       'group': group,
@@ -26,6 +35,7 @@ class ScheduleItem {
     };
   }
 
+  // Для загрузки из базы
   factory ScheduleItem.fromMap(Map<String, dynamic> map) {
     return ScheduleItem(
       group: map['group'],
@@ -37,6 +47,7 @@ class ScheduleItem {
     );
   }
 
+  // Создает копию с измененными полями
   ScheduleItem copyWith({
     String? group,
     int? lessonNumber,

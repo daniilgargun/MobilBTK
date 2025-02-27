@@ -3,15 +3,21 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter/material.dart';
 import '../widgets/error_snackbar.dart';
 import '../providers/schedule_provider.dart';
+
+// Следит за подключением к интернету
+// Кэширует данные когда офлайн
+
 class ConnectivityService {
+  // Создаем один экземпляр на все приложение
   static final ConnectivityService _instance = ConnectivityService._internal();
+  static bool _hasShownOfflineWarning = false;  // Статическое поле для отслеживания уведомления
+  
   factory ConnectivityService() => _instance;
   ConnectivityService._internal();
 
   final _connectivity = Connectivity();
   late Box<String> _cache;
   bool _lastKnownStatus = true;
-  static bool _hasShownOfflineWarning = false;  // Статическое поле для отслеживания уведомления
 
   Future<void> init() async {
     await Hive.initFlutter();
@@ -20,6 +26,7 @@ class ConnectivityService {
     _connectivity.onConnectivityChanged.listen(_handleConnectivityChange);
   }
 
+  // Проверяем изменения подключения
   void _handleConnectivityChange(ConnectivityResult result) async {
     final isOnlineNow = result != ConnectivityResult.none;
     
@@ -37,6 +44,7 @@ class ConnectivityService {
     }
   }
 
+  // Проверяет есть ли интернет
   Future<bool> isOnline() async {
     try {
       final result = await _connectivity.checkConnectivity();
@@ -49,6 +57,8 @@ class ConnectivityService {
 
   bool get lastKnownStatus => _lastKnownStatus;
 
+  // Показывает предупреждение что нет инета
+  // Показывает только один раз
   void showOfflineWarning(BuildContext context) {
     if (!_lastKnownStatus && !_hasShownOfflineWarning) {
       _hasShownOfflineWarning = true;
@@ -59,10 +69,12 @@ class ConnectivityService {
     }
   }
 
+  // Сохраняет данные в кэш
   Future<void> cacheData(String key, String data) async {
     await _cache.put(key, data);
   }
 
+  // Берет данные из кэша
   String? getCachedData(String key) {
     return _cache.get(key);
   }

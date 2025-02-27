@@ -12,6 +12,15 @@ class ParserService {
   static bool _isLoading = false;
   static DateTime? _lastLoadTime;
 
+  // Парсит расписание с сайта колледжа
+  // Использую библиотеку html для парсинга
+
+  // Основной метод парсинга
+  // Возвращает:
+  // - расписание
+  // - список групп
+  // - список преподов
+  // - ошибку если что-то пошло не так
   Future<(Map<String, Map<String, List<ScheduleItem>>>?, List<String>, List<String>, String?)> parseSchedule() async {
     // Проверяем, не было ли загрузки в последние 5 секунд
     if (_lastLoadTime != null && 
@@ -83,7 +92,7 @@ class ParserService {
     }
   }
 
-  // Выносим парсинг таблицы в отдельный метод
+  // Парсит одну таблицу с расписанием
   void _parseTable(Element table, Map<String, Map<String, List<ScheduleItem>>> scheduleData, 
                   Set<String> groupSet, Set<String> teacherSet) {
     final rows = table.getElementsByTagName('tr');
@@ -123,6 +132,7 @@ class ParserService {
     }
   }
 
+  // Достает инфу о паре из строки таблицы
   ScheduleItem? _extractLessonData(Element row) {
     try {
       final number = row.querySelector('.ari-tbl-col-2')?.text.trim() ?? '';

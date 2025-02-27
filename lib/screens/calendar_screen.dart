@@ -78,11 +78,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final monthStr = _getMonthStr(date.month);
     final dateStr = '$day-$monthStr';
     
-    debugPrint('🔍 Поиск расписания для даты: $dateStr');
-    
     final scheduleData = provider.fullScheduleData; // Используем fullScheduleData вместо scheduleData
     if (scheduleData == null || !scheduleData.containsKey(dateStr)) {
-      debugPrint('❌ Расписание не найдено для даты: $dateStr');
       return const [];
     }
 
@@ -110,6 +107,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
     return allLessons;
   }
 
+  // Переводит номер месяца в текст
+  // например 3 -> "март"
   String _getMonthStr(int month) {
     const months = {
       1: 'янв',
@@ -174,6 +173,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
+  // Делает кнопку фильтра с иконкой
   Widget _buildFilterOption(String title, String value, IconData icon) {
     final isSelected = _selectedFilter == value;
     return Material(
@@ -283,7 +283,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     await showDialog(
       context: context,
       builder: (context) => SelectionDialog(
-        title: 'Выберите преподавателя',
+        title: 'Выберите\nпреподавателя',
         items: teachers,
         selectedItem: _selectedTeacher,
         icon: Icons.person,
@@ -298,7 +298,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
-  // В классе _CalendarScreenState добавим метод для определения цветов маркеров
+  // Показывает цветные точки для дней с парами
   Widget _buildEventMarkers(DateTime date, ScheduleProvider scheduleProvider, NotesProvider notesProvider) {
     final hasSchedule = _getScheduleForDay(date, scheduleProvider).isNotEmpty;
     final hasNote = notesProvider.hasNoteForDate(date);
@@ -335,7 +335,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
-  // Добавим метод для определения цвета маркера расписания
+  // Выбирает цвет точки в зависимости от типа пары
+  // Красный - Соловей
+  // Синий - практика
+  // Зеленый - лекция
   Color _getScheduleMarkerColor(DateTime date, ScheduleProvider provider) {
     final schedule = _getScheduleForDay(date, provider);
     if (schedule.isEmpty) return Colors.transparent;
@@ -485,10 +488,18 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     },
                     locale: 'ru_RU',
                     startingDayOfWeek: StartingDayOfWeek.monday,
-                    headerStyle: const HeaderStyle(
+                    headerStyle: HeaderStyle(
+                      formatButtonVisible: true,
                       formatButtonShowsNext: false,
                       titleCentered: true,
-                      formatButtonVisible: true,
+                      formatButtonDecoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.withOpacity(0.4)),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      formatButtonTextStyle: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                      formatButtonPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                     ),
                     calendarStyle: CalendarStyle(
                       outsideDaysVisible: false,

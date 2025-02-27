@@ -1,3 +1,6 @@
+// Главный файл приложения
+// Тут настраиваем все основные штуки и запускаем приложение
+
 import 'package:flutter/material.dart';
 import 'screens/schedule_screen.dart';
 import 'screens/calendar_screen.dart';
@@ -13,33 +16,34 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'services/connectivity_service.dart';
 
 void main() async {
+  // Инициализируем всякие важные штуки
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Отключаем сообщения об ошибках OpenGL
+  // Убираем надоедливые сообщения про OpenGL
   FlutterError.onError = (FlutterErrorDetails details) {
     if (!details.toString().contains('OpenGL ES API')) {
       FlutterError.presentError(details);
     }
   };
   
-  // Инициализируем временные зоны для корректной работы уведомлений
+  // Настраиваем временные зоны (нужно для уведомлений)
   tz.initializeTimeZones();
   
-  // Инициализируем сервис подключения
+  // Запускаем сервис проверки интернета
   final connectivityService = ConnectivityService();
   await connectivityService.init();
   
-  // Предварительно инициализируем сервисы
+  // Создаем все нужные сервисы заранее
   final databaseService = DatabaseService();
-  await databaseService.database; // Инициализируем БД заранее
+  await databaseService.database;
   
   final scheduleProvider = ScheduleProvider();
   final notesProvider = NotesProvider();
   
-  // Загружаем данные при старте только один раз
+  // Настраиваем русский язык для дат
   await initializeDateFormatting('ru_RU', null);
 
-  // Запускаем загрузку данных асинхронно
+  // Загружаем данные в фоне
   Future.microtask(() async {
     await notesProvider.loadNotes();
     await scheduleProvider.loadSchedule();
@@ -56,6 +60,8 @@ void main() async {
   );
 }
 
+// Главный виджет приложения
+// Настраиваем тему и навигацию
 class MyApp extends StatefulWidget {
   const MyApp({super.key});
 
@@ -143,6 +149,11 @@ class MyAppState extends State<MyApp> {
   }
 }
 
+// Нижняя панель навигации
+// Переключает между экранами:
+// - Расписание
+// - Календарь 
+// - Настройки
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key});
 

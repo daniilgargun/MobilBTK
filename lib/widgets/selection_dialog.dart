@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+// Диалог для выбора группы или препода
+// Показывает список с поиском и галочкой на выбранном элементе
 class SelectionDialog extends StatelessWidget {
   final String title;
   final List<String> items;

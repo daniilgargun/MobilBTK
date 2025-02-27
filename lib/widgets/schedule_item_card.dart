@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import '../models/schedule_model.dart';
 import '../models/lesson_time_model.dart';
 
+// Карточка для одной пары в расписании
+// Показывает всю инфу о паре - номер, время, группу, препода и кабинет
+
 class ScheduleItemCard extends StatelessWidget {
   final ScheduleItem item;
   final DateTime date;
@@ -162,6 +165,10 @@ class ScheduleItemCard extends StatelessWidget {
     );
   }
 
+  // Выбираем цвет полоски слева
+  // Синий - практика
+  // Красный - пары Соловья
+  // Зеленый - все остальное
   Color _getAccentColor(BuildContext context, ScheduleItem item) {
     if (item.subject.toLowerCase().contains('пр')) {
       return const Color(0xFF2196F3); // Синий для практических

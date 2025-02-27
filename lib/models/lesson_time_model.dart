@@ -1,8 +1,16 @@
+// Модель для хранения времени пар
+// Разное расписание для разных дней недели:
+// - Обычное (пн, ср, пт)
+// - Вторник (с классным часом)
+// - Четверг (с часом информации)
+// - Суббота (сокращенные перемены)
+
 class LessonTime {
+  // Время начала и конца пары
   final String start;
   final String end;
-  final int lessonNumber;
-  final String dayType; // "normal" (пн,ср,пт), "tuesday", "thursday", "saturday"
+  final int lessonNumber;  // Номер пары (1-6)
+  final String dayType;    // Тип дня (normal/tuesday/thursday/saturday)
 
   const LessonTime({
     required this.start,
@@ -11,6 +19,7 @@ class LessonTime {
     required this.dayType,
   });
 
+  // Все расписания звонков
   static Map<String, List<LessonTime>> lessonTimes = {
     "normal": [ // Понедельник, среда, пятница
       LessonTime(start: "8:00", end: "8:45", lessonNumber: 1, dayType: "normal"),
@@ -70,10 +79,12 @@ class LessonTime {
     ],
   };
 
+  // Получаем время для конкретной пары
   static List<LessonTime> getTimesForLesson(int lessonNumber, String dayType) {
     return lessonTimes[dayType]?.where((time) => time.lessonNumber == lessonNumber).toList() ?? [];
   }
 
+  // Определяем тип дня по номеру дня недели
   static String getDayType(int weekday) {
     switch (weekday) {
       case DateTime.tuesday:
@@ -87,6 +98,7 @@ class LessonTime {
     }
   }
 
+  // Получаем название дня недели по-русски
   static String getDayName(int weekday) {
     switch (weekday) {
       case DateTime.monday:

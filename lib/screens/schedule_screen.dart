@@ -101,7 +101,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     return weekdays[date.weekday - 1];
   }
 
-  // Обновим поле поиска
+  // Сделал поле поиска с иконкой и кнопкой очистки
   Widget _buildSearchField() {
     return Padding(
       padding: const EdgeInsets.all(16.0),
@@ -134,7 +134,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
-  // Обновим отображение даты
+  // Добавил красивую анимацию для даты
   Widget _buildDateHeader(String date) {
     return Padding(
       padding: const EdgeInsets.only(left: 16.0, right: 16.0, bottom: 8.0),
@@ -164,7 +164,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
-  // Обновим навигацию точками
+  // Добавил точки внизу для навигации между днями
   Widget _buildPageDots(List<String> dates) {
     return Positioned(
       bottom: 16,
@@ -207,7 +207,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
-  // Добавим метод для форматирования текста
+  // Функция для форматирования текста при отправке расписания
   String _formatScheduleForSharing(List<ScheduleItem> lessons, String date) {
     final buffer = StringBuffer();
     
@@ -234,7 +234,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     return buffer.toString();
   }
 
-  // Добавим метод для преобразования строковой даты в DateTime
+  // Преобразует строку с датой в нормальный DateTime
+  // Например из "01-март" делает DateTime
   DateTime _parseDate(String dateStr) {
     final parts = dateStr.split('-');
     if (parts.length != 2) return DateTime.now();
@@ -575,7 +576,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     super.dispose();
   }
 
-  // В классе ScheduleScreen добавим метод для показа диалога
+  // Показывает диалог с расписанием звонков
   void _showBellSchedule() {
     showDialog(
       context: context,
@@ -583,7 +584,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
-  // Добавим метод для поделиться расписанием
+  // Функция для кнопки "Поделиться"
+  // Собирает расписание в текст и открывает меню отправки
   void _shareSchedule() async {
     if (context.read<ScheduleProvider>().scheduleData != null) {
       final provider = context.read<ScheduleProvider>();
@@ -611,6 +613,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     }
   }
 
+  // Загружает данные при запуске
   Future<void> _loadData() async {
     final provider = context.read<ScheduleProvider>();
     // Загружаем последовательно
