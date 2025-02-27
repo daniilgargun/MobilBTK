@@ -73,9 +73,16 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   // Получаем расписание для выбранного дня
   List<ScheduleItem> _getScheduleForDay(DateTime date, ScheduleProvider provider) {
-    final dateStr = '${date.day}-${_getMonthStr(date.month)}';
-    final scheduleData = provider.scheduleData;
+    // Форматируем дату в нужный формат
+    final day = date.day.toString().padLeft(2, '0');
+    final monthStr = _getMonthStr(date.month);
+    final dateStr = '$day-$monthStr';
+    
+    debugPrint('🔍 Поиск расписания для даты: $dateStr');
+    
+    final scheduleData = provider.fullScheduleData; // Используем fullScheduleData вместо scheduleData
     if (scheduleData == null || !scheduleData.containsKey(dateStr)) {
+      debugPrint('❌ Расписание не найдено для даты: $dateStr');
       return const [];
     }
 
@@ -105,9 +112,18 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   String _getMonthStr(int month) {
     const months = {
-      1: 'янв', 2: 'фев', 3: 'мар', 4: 'апр',
-      5: 'май', 6: 'июн', 7: 'июл', 8: 'авг',
-      9: 'сен', 10: 'окт', 11: 'ноя', 12: 'дек'
+      1: 'янв',
+      2: 'фев',
+      3: 'март', // Используем полное название для марта
+      4: 'апр',
+      5: 'май',
+      6: 'июн',
+      7: 'июл',
+      8: 'авг',
+      9: 'сен',
+      10: 'окт',
+      11: 'ноя',
+      12: 'дек'
     };
     return months[month] ?? '';
   }
@@ -362,6 +378,58 @@ class _CalendarScreenState extends State<CalendarScreen> {
     }
   }
 
+  String _formatDate(String dateStr) {
+    dateStr = dateStr.replaceAll('.', '');
+    final parts = dateStr.split('-');
+    if (parts.length != 2) return dateStr;
+
+    final day = int.parse(parts[0]);
+    final monthStr = parts[1].toLowerCase().trim();
+    
+    final monthNames = {
+      'янв': 'января',
+      'фев': 'февраля',
+      'февр': 'февраля',
+      'март': 'марта',
+      'мар': 'марта',
+      'апр': 'апреля',
+      'май': 'мая',
+      'июн': 'июня',
+      'июл': 'июля',
+      'авг': 'августа',
+      'сен': 'сентября',
+      'окт': 'октября',
+      'ноя': 'ноября',
+      'дек': 'декабря',
+    };
+
+    final month = monthNames[monthStr] ?? monthStr;
+    final weekday = _getWeekday(day, monthStr);
+    
+    return '$day $month ($weekday)';
+  }
+
+  String _getWeekday(int day, String monthStr) {
+    // Определяем месяц
+    final monthMap = {
+      'янв': 1, 'фев': 2, 
+      'март': 3, 'мар': 3,
+      'апр': 4, 'май': 5,
+      'июн': 6, 'июл': 7,
+      'авг': 8, 'сен': 9,
+      'окт': 10, 'ноя': 11,
+      'дек': 12
+    };
+    
+    final month = monthMap[monthStr.toLowerCase()] ?? 1;
+    final now = DateTime.now();
+    final year = month < now.month ? now.year + 1 : now.year;
+    final date = DateTime(year, month, day);
+    
+    final weekdays = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'];
+    return weekdays[date.weekday - 1];
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<ScheduleProvider>(
@@ -480,7 +548,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           children: [
                             if (schedule.isNotEmpty) ...[
                               Text(
-                                'Расписание на ${DateFormat('d MMMM', 'ru_RU').format(_selectedDay!)}',
+                                'Расписание на ${_formatDate(DateFormat('d-MMM', 'ru_RU').format(_selectedDay!))}',
                                 style: Theme.of(context).textTheme.titleLarge,
                               ),
                               const SizedBox(height: 8),
@@ -500,7 +568,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                                     color: Theme.of(context).colorScheme.primary),
                                 const SizedBox(width: 8),
                                 Text(
-                                  'Заметка на ${DateFormat('d MMMM', 'ru_RU').format(_selectedDay!)}',
+                                  'Заметка на ${_formatDate(DateFormat('d-MMM', 'ru_RU').format(_selectedDay!))}',
                                   style: Theme.of(context).textTheme.titleMedium,
                                 ),
                               ],

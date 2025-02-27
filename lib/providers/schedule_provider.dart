@@ -86,29 +86,28 @@ class ScheduleProvider extends ChangeNotifier {
     
     try {
       _updateStatus('Загрузка расписания...');
-      
-      final connectivityService = ConnectivityService();
-      final isOnline = await connectivityService.isOnline();
-      _isOffline = !isOnline;
-      notifyListeners();
+      debugPrint('📥 Начало загрузки расписания');
       
       // Загружаем оба типа расписания
       final currentSchedule = await _db.getCurrentSchedule();
       final archiveSchedule = await _db.getArchiveSchedule();
+      
+      debugPrint('📅 Текущее расписание: ${currentSchedule.keys.join(", ")}');
+      debugPrint('📅 Архивное расписание: ${archiveSchedule.keys.join(", ")}');
       
       if ((currentSchedule.isNotEmpty || archiveSchedule.isNotEmpty) && _mounted) {
         _currentScheduleData = currentSchedule;
         _fullScheduleData = archiveSchedule;
         notifyListeners();
         
-        if (!isOnline) {
+        if (!await ConnectivityService().isOnline()) {
           _updateStatus('Работа в офлайн режиме');
           _isLoaded = true;
           return;
         }
       }
 
-      if (!isOnline) {
+      if (!await ConnectivityService().isOnline()) {
         if (currentSchedule.isEmpty && archiveSchedule.isEmpty) {
           _handleError(
             'Нет данных',
@@ -136,21 +135,36 @@ class ScheduleProvider extends ChangeNotifier {
   }
 
   Future<void> updateSchedule({bool silent = false}) async {
+    // Предотвращаем параллельные обновления
+    if (_isUpdating) {
+      debugPrint('⏭️ Обновление уже выполняется, пропускаем');
+      return;
+    }
+    
+    _isUpdating = true;
+    
     if (!silent) {
       _isLoading = true;
       _updateStatus('Обновление расписания...');
     }
     
     try {
+      debugPrint('🔄 Начало обновления расписания');
       final result = await compute(_parseScheduleIsolate, _parser.url);
       
       if (result.$1 != null) {
+        debugPrint('📅 Полученные даты: ${result.$1!.keys.join(", ")}');
         _currentScheduleData = result.$1;
+        
+        debugPrint('💾 Сохранение текущего расписания');
         await _db.saveCurrentSchedule(_currentScheduleData!);
         
+        debugPrint('📚 Архивация расписания');
         await _db.archiveSchedule(_currentScheduleData!);
         
+        debugPrint('📖 Загрузка архивного расписания');
         _fullScheduleData = await _db.getArchiveSchedule();
+        debugPrint('📅 Даты в архиве: ${_fullScheduleData?.keys.join(", ")}');
         
         _groups = result.$2;
         _teachers = result.$3;
@@ -226,17 +240,35 @@ class ScheduleProvider extends ChangeNotifier {
   }
 
   DateTime _parseDateString(String dateStr) {
-    final parts = dateStr.split(' ');
+    debugPrint('🔍 Парсинг даты: $dateStr');
+    final parts = dateStr.split('-');
+    if (parts.length != 2) {
+      debugPrint('❌ Неверный формат даты: $dateStr');
+      throw FormatException('Неверный формат даты: $dateStr');
+    }
+
     final day = int.parse(parts[0]);
+    final monthStr = parts[1].toLowerCase().trim();
     
     final monthMap = {
-      'янв': 1, 'фев': 2, 'мар': 3, 'апр': 4,
-      'май': 5, 'июн': 6, 'июл': 7, 'авг': 8,
-      'сен': 9, 'окт': 10, 'ноя': 11, 'дек': 12
+      'янв': 1, 'фев': 2, 
+      'март': 3, 'мар': 3, 
+      'апр': 4, 'май': 5, 
+      'июн': 6, 'июл': 7, 
+      'авг': 8, 'сен': 9, 
+      'окт': 10, 'ноя': 11, 
+      'дек': 12,
+      // Добавляем поддержку числового формата
+      '01': 1, '02': 2, '03': 3, '04': 4,
+      '05': 5, '06': 6, '07': 7, '08': 8,
+      '09': 9, '10': 10, '11': 11, '12': 12,
     };
     
-    final monthStr = parts[1].toLowerCase().substring(0, 3);
-    final month = monthMap[monthStr] ?? 1;
+    final month = monthMap[monthStr];
+    if (month == null) {
+      debugPrint('❌ Неизвестный месяц: $monthStr');
+      throw FormatException('Неизвестный месяц: $monthStr');
+    }
     
     final now = DateTime.now();
     var year = now.year;
@@ -245,6 +277,7 @@ class ScheduleProvider extends ChangeNotifier {
       year++;
     }
     
+    debugPrint('✅ Распознана дата: $day.$month.$year');
     return DateTime(year, month, day);
   }
 

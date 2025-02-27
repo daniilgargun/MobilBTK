@@ -119,6 +119,7 @@ class DatabaseService {
 
   Future<void> archiveSchedule(Map<String, Map<String, List<ScheduleItem>>> scheduleData) async {
     final db = await database;
+    
     await db.transaction((txn) async {
       for (var date in scheduleData.keys) {
         final existing = await txn.query(
@@ -126,7 +127,7 @@ class DatabaseService {
           where: 'date = ?',
           whereArgs: [date],
         );
-        
+
         if (existing.isEmpty) {
           for (var group in scheduleData[date]!.keys) {
             for (var item in scheduleData[date]![group]!) {
@@ -160,8 +161,11 @@ class DatabaseService {
     
     final List<Map<String, dynamic>> results = await db.query(tableName);
     
+    final Set<String> uniqueDates = {};
+    
     for (var row in results) {
       final date = row['date'] as String;
+      uniqueDates.add(date);
       final group = row['group_name'] as String;
       
       scheduleData.putIfAbsent(date, () => {});
@@ -195,7 +199,6 @@ class DatabaseService {
       final List<Map<String, dynamic>> maps = await db.query('notes');
       return List.generate(maps.length, (i) => Note.fromMap(maps[i]));
     } catch (e) {
-      debugPrint('Ошибка при получении заметок: $e');
       return [];
     }
   }
@@ -242,11 +245,57 @@ class DatabaseService {
     final db = await database;
     final cutoffDate = DateTime.now().subtract(Duration(days: days));
     
-    await db.delete(
-      'archive_schedule',
-      where: 'date < ?',
-      whereArgs: [cutoffDate.toIso8601String()],
-    );
+    final records = await db.query('archive_schedule', distinct: true, columns: ['date']);
+    
+    for (var record in records) {
+      final dateStr = record['date'] as String;
+      try {
+        final date = _parseDate(dateStr);
+        if (date.isBefore(cutoffDate)) {
+          await db.delete(
+            'archive_schedule',
+            where: 'date = ?',
+            whereArgs: [dateStr],
+          );
+        }
+      } catch (e) {
+        continue;
+      }
+    }
+  }
+
+  DateTime _parseDate(String dateStr) {
+    final parts = dateStr.split('-');
+    if (parts.length != 2) {
+      throw FormatException('Неверный формат даты: $dateStr');
+    }
+
+    final day = int.parse(parts[0]);
+    final monthStr = parts[1].toLowerCase().trim();
+    
+    final monthMap = {
+      'янв': 1, 'фев': 2, 
+      'март': 3, 'мар': 3, 
+      'апр': 4, 'май': 5, 
+      'июн': 6, 'июл': 7, 
+      'авг': 8, 'сен': 9, 
+      'окт': 10, 'ноя': 11, 
+      'дек': 12,
+    };
+    
+    final month = monthMap[monthStr];
+    if (month == null) {
+      throw FormatException('Неизвестный месяц: $monthStr');
+    }
+    
+    final now = DateTime.now();
+    var year = now.year;
+    
+    if (month < now.month) {
+      year++;
+    }
+    
+    return DateTime(year, month, day);
   }
 
   Future<void> recreateDatabase() async {

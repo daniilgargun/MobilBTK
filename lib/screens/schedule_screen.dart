@@ -50,28 +50,55 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     await prefs.setString(_searchQueryKey, query);
   }
 
-  String formatScheduleDate(String dateStr) {
-    try {
-      // Парсим дату формата "21-фев"
-      final parts = dateStr.split('-');
-      if (parts.length != 2) return dateStr;
+  String _formatDate(String dateStr) {
+    final parts = dateStr.split('-');
+    if (parts.length != 2) return dateStr;
 
-      final day = int.parse(parts[0]);
-      final monthMap = {
-        'янв': 1, 'фев': 2, 'мар': 3, 'апр': 4,
-        'май': 5, 'июн': 6, 'июл': 7, 'авг': 8,
-        'сен': 9, 'окт': 10, 'ноя': 11, 'дек': 12
-      };
-      final month = monthMap[parts[1].toLowerCase()];
-      if (month == null) return dateStr;
+    final day = int.parse(parts[0]);
+    final monthStr = parts[1].toLowerCase().trim();
+    
+    final monthNames = {
+      'янв': 'января',
+      'фев': 'февраля',
+      'февр': 'февраля',
+      'март': 'марта',
+      'мар': 'марта',
+      'апр': 'апреля',
+      'май': 'мая',
+      'июн': 'июня',
+      'июл': 'июля',
+      'авг': 'августа',
+      'сен': 'сентября',
+      'окт': 'октября',
+      'ноя': 'ноября',
+      'дек': 'декабря',
+    };
 
-      final date = DateTime(DateTime.now().year, month, day);
-      final weekDay = DateFormat('EEEE', 'ru_RU').format(date);
-      
-      return '${parts[0]} ${parts[1]}($weekDay)';
-    } catch (e) {
-      return dateStr;
-    }
+    final month = monthNames[monthStr] ?? monthStr;
+    final weekday = _getWeekday(day, monthStr);
+    
+    return '$day $month ($weekday)';
+  }
+
+  String _getWeekday(int day, String monthStr) {
+    // Определяем месяц
+    final monthMap = {
+      'янв': 1, 'фев': 2, 
+      'март': 3, 'мар': 3,
+      'апр': 4, 'май': 5,
+      'июн': 6, 'июл': 7,
+      'авг': 8, 'сен': 9,
+      'окт': 10, 'ноя': 11,
+      'дек': 12
+    };
+    
+    final month = monthMap[monthStr.toLowerCase()] ?? 1;
+    final now = DateTime.now();
+    final year = month < now.month ? now.year + 1 : now.year;
+    final date = DateTime(year, month, day);
+    
+    final weekdays = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'];
+    return weekdays[date.weekday - 1];
   }
 
   // Обновим поле поиска
@@ -126,7 +153,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           );
         },
         child: Text(
-          formatScheduleDate(date),
+          _formatDate(date),
           key: ValueKey<String>(date), // Важно для анимации
           style: Theme.of(context).textTheme.headlineSmall?.copyWith(
             fontWeight: FontWeight.bold,
@@ -189,7 +216,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       buffer.writeln('📚 Расписание группы $group\n');
     }
     
-    buffer.writeln('📅 ${formatScheduleDate(date)}');
+    buffer.writeln('📅 ${_formatDate(date)}');
     buffer.writeln('═════════════════════\n');
 
     for (var lesson in lessons) {
