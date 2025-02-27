@@ -133,17 +133,17 @@ class BellScheduleDialog extends StatelessWidget {
               child: Column(
                 children: [
                   _buildTimeRow(
-                    '1 пара',
+                    '1 пар',
                     '8:00-8:45',
                     '8:55-9:40',
                   ),
                   _buildTimeRow(
-                    '2 пара',
+                    '2 пар',
                     '9:50-10:35',
                     '11:00-11:45',
                   ),
                   _buildTimeRow(
-                    '3 пара',
+                    '3 пар',
                     '12:20-13:05',
                     '13:15-14:00',
                   ),
@@ -156,17 +156,17 @@ class BellScheduleDialog extends StatelessWidget {
               child: Column(
                 children: [
                   _buildTimeRow(
-                    '4 пара',
+                    '4 пар',
                     '14:10-14:55',
                     '15:05-15:50',
                   ),
                   _buildTimeRow(
-                    '5 пара',
+                    '5 пар',
                     '16:00-16:45',
                     '16:55-17:40',
                   ),
                   _buildTimeRow(
-                    '6 пара',
+                    '6 пар',
                     '17:50-18:35',
                     '18:40-19:25',
                   ),

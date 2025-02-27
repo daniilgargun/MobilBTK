@@ -349,176 +349,200 @@ class _CalendarScreenState extends State<CalendarScreen> {
     }
   }
 
+  String _getCalendarFormatButtonText(CalendarFormat format) {
+    switch (format) {
+      case CalendarFormat.month:
+        return 'Месяц';
+      case CalendarFormat.twoWeeks:
+        return '2 недели';
+      case CalendarFormat.week:
+        return 'Неделя';
+      default:
+        return 'Месяц';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Row(
-          children: [
-            const Icon(Icons.calendar_today),
-            const SizedBox(width: 10),
-            const Text('Календарь'),
-            const Spacer(),
-            if (_selectedFilter != 'all')
-              Chip(
-                label: Text(_selectedFilter == 'group'
-                    ? _selectedGroup ?? ''
-                    : _selectedTeacher ?? ''),
-                onDeleted: () {
-                  setState(() {
-                    _selectedFilter = 'all';
-                    _selectedGroup = null;
-                    _selectedTeacher = null;
-                  });
-                  _saveSettings();
-                },
-              ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.filter_list),
-            tooltip: 'Фильтр',
-            onPressed: _showFilterDialog,
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Consumer2<ScheduleProvider, NotesProvider>(
-            builder: (context, scheduleProvider, notesProvider, child) {
-              return TableCalendar(
-                firstDay: DateTime.now().subtract(const Duration(days: 365)),
-                lastDay: DateTime.now().add(const Duration(days: 365)),
-                focusedDay: _focusedDay,
-                selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
-                calendarFormat: _calendarFormat,
-                onFormatChanged: (format) {
-                  setState(() {
-                    _calendarFormat = format;
-                  });
-                },
-                locale: 'ru_RU',
-                startingDayOfWeek: StartingDayOfWeek.monday,
-                headerStyle: const HeaderStyle(
-                  formatButtonShowsNext: false,
-                  titleCentered: true,
-                  formatButtonVisible: true,
-                ),
-                calendarStyle: CalendarStyle(
-                  outsideDaysVisible: false,
-                  weekendTextStyle: TextStyle(
-                    color: Theme.of(context).colorScheme.error,
+    return Consumer<ScheduleProvider>(
+      builder: (context, provider, child) {
+        // Используем полное расписание для календаря
+        final scheduleData = provider.fullScheduleData;
+        return Scaffold(
+          appBar: AppBar(
+            title: Row(
+              children: [
+                const Icon(Icons.calendar_today),
+                const SizedBox(width: 10),
+                const Text('Календарь'),
+                const Spacer(),
+                if (_selectedFilter != 'all')
+                  Chip(
+                    label: Text(_selectedFilter == 'group'
+                        ? _selectedGroup ?? ''
+                        : _selectedTeacher ?? ''),
+                    onDeleted: () {
+                      setState(() {
+                        _selectedFilter = 'all';
+                        _selectedGroup = null;
+                        _selectedTeacher = null;
+                      });
+                      _saveSettings();
+                    },
                   ),
-                  todayDecoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
-                    shape: BoxShape.circle,
-                  ),
-                  selectedDecoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primary,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                onDaySelected: (selectedDay, focusedDay) {
-                  setState(() {
-                    _selectedDay = selectedDay;
-                    _focusedDay = focusedDay;
-                  });
-                },
-                calendarBuilders: CalendarBuilders(
-                  markerBuilder: (context, date, events) {
-                    return _buildEventMarkers(date, scheduleProvider, notesProvider);
-                  },
-                ),
-              );
-            },
-          ),
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            child: const Divider(
-              thickness: 1.5,
+              ],
             ),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.filter_list),
+                tooltip: 'Фильтр',
+                onPressed: _showFilterDialog,
+              ),
+            ],
           ),
-          if (_selectedDay != null)
-            Expanded(
-              child: Consumer2<ScheduleProvider, NotesProvider>(
-                builder: (context, provider, notesProvider, child) {
-                  final schedule = _getScheduleForDay(_selectedDay!, provider);
-                  final note = notesProvider.getNote(_selectedDay!);
-                  
-                  // Обновляем текст только при смене дня
-                  if (_noteController.text != note?.text) {
-                    _noteController.text = note?.text ?? '';
-                  }
-
-                  return SingleChildScrollView(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (schedule.isNotEmpty) ...[
-                          Text(
-                            'Расписание на ${DateFormat('d MMMM', 'ru_RU').format(_selectedDay!)}',
-                            style: Theme.of(context).textTheme.titleLarge,
-                          ),
-                          const SizedBox(height: 8),
-                          ...schedule.map((item) => Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: ScheduleItemCard(
-                              item: item,
-                              index: schedule.indexOf(item),
-                              date: _selectedDay!,
-                            ),
-                          )),
-                          const SizedBox(height: 16),
-                        ],
-                        Row(
-                          children: [
-                            Icon(Icons.note_alt_outlined,
-                                color: Theme.of(context).colorScheme.primary),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Заметка на ${DateFormat('d MMMM', 'ru_RU').format(_selectedDay!)}',
-                              style: Theme.of(context).textTheme.titleMedium,
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        TextField(
-                          controller: _noteController,
-                          decoration: InputDecoration(
-                            hintText: 'Добавить заметку...',
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            filled: true,
-                            fillColor: Theme.of(context).colorScheme.surface,
-                          ),
-                          maxLines: 5,
-                          onChanged: (value) {
-                            if (value.trim().isEmpty) {
-                              notesProvider.deleteNote(_selectedDay!);
-                            } else {
-                              notesProvider.saveNote(
-                                Note(
-                                  date: _selectedDay!,
-                                  text: value,
-                                ),
-                              );
-                            }
-                          },
-                          onTapOutside: (event) {
-                            FocusScope.of(context).unfocus(); // Сбрасываем фокус при нажатии вне поля
-                          },
-                        ),
-                      ],
+          body: Column(
+            children: [
+              Consumer2<ScheduleProvider, NotesProvider>(
+                builder: (context, scheduleProvider, notesProvider, child) {
+                  return TableCalendar(
+                    firstDay: DateTime.now().subtract(const Duration(days: 365)),
+                    lastDay: DateTime.now().add(const Duration(days: 365)),
+                    focusedDay: _focusedDay,
+                    selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+                    calendarFormat: _calendarFormat,
+                    onFormatChanged: (format) {
+                      setState(() {
+                        _calendarFormat = format;
+                      });
+                    },
+                    locale: 'ru_RU',
+                    startingDayOfWeek: StartingDayOfWeek.monday,
+                    headerStyle: const HeaderStyle(
+                      formatButtonShowsNext: false,
+                      titleCentered: true,
+                      formatButtonVisible: true,
                     ),
+                    calendarStyle: CalendarStyle(
+                      outsideDaysVisible: false,
+                      weekendTextStyle: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                      todayDecoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
+                        shape: BoxShape.circle,
+                      ),
+                      selectedDecoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primary,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    onDaySelected: (selectedDay, focusedDay) {
+                      setState(() {
+                        _selectedDay = selectedDay;
+                        _focusedDay = focusedDay;
+                      });
+                    },
+                    calendarBuilders: CalendarBuilders(
+                      markerBuilder: (context, date, events) {
+                        return _buildEventMarkers(date, scheduleProvider, notesProvider);
+                      },
+                    ),
+                    availableCalendarFormats: const {
+                      CalendarFormat.month: 'Месяц',
+                      CalendarFormat.twoWeeks: '2 недели',
+                      CalendarFormat.week: 'Неделя',
+                    },
                   );
                 },
               ),
-            ),
-        ],
-      ),
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 16),
+                child: const Divider(
+                  thickness: 1.5,
+                ),
+              ),
+              if (_selectedDay != null)
+                Expanded(
+                  child: Consumer2<ScheduleProvider, NotesProvider>(
+                    builder: (context, provider, notesProvider, child) {
+                      final schedule = _getScheduleForDay(_selectedDay!, provider);
+                      final note = notesProvider.getNote(_selectedDay!);
+                      
+                      // Обновляем текст только при смене дня
+                      if (_noteController.text != note?.text) {
+                        _noteController.text = note?.text ?? '';
+                      }
+
+                      return SingleChildScrollView(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (schedule.isNotEmpty) ...[
+                              Text(
+                                'Расписание на ${DateFormat('d MMMM', 'ru_RU').format(_selectedDay!)}',
+                                style: Theme.of(context).textTheme.titleLarge,
+                              ),
+                              const SizedBox(height: 8),
+                              ...schedule.map((item) => Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: ScheduleItemCard(
+                                  item: item,
+                                  index: schedule.indexOf(item),
+                                  date: _selectedDay!,
+                                ),
+                              )),
+                              const SizedBox(height: 16),
+                            ],
+                            Row(
+                              children: [
+                                Icon(Icons.note_alt_outlined,
+                                    color: Theme.of(context).colorScheme.primary),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Заметка на ${DateFormat('d MMMM', 'ru_RU').format(_selectedDay!)}',
+                                  style: Theme.of(context).textTheme.titleMedium,
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: _noteController,
+                              decoration: InputDecoration(
+                                hintText: 'Добавить заметку...',
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                filled: true,
+                                fillColor: Theme.of(context).colorScheme.surface,
+                              ),
+                              maxLines: 5,
+                              onChanged: (value) {
+                                if (value.trim().isEmpty) {
+                                  notesProvider.deleteNote(_selectedDay!);
+                                } else {
+                                  notesProvider.saveNote(
+                                    Note(
+                                      date: _selectedDay!,
+                                      text: value,
+                                    ),
+                                  );
+                                }
+                              },
+                              onTapOutside: (event) {
+                                FocusScope.of(context).unfocus(); // Сбрасываем фокус при нажатии вне поля
+                              },
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 

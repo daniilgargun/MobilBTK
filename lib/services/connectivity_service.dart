@@ -3,7 +3,6 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter/material.dart';
 import '../widgets/error_snackbar.dart';
 import '../providers/schedule_provider.dart';
-import 'dart:developer' as developer;
 class ConnectivityService {
   static final ConnectivityService _instance = ConnectivityService._internal();
   factory ConnectivityService() => _instance;

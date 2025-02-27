@@ -6,12 +6,9 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/schedule_item_card.dart';
 import '../widgets/bell_schedule_dialog.dart';
-import '../widgets/error_banner.dart';
-import 'package:awesome_snackbar_content/awesome_snackbar_content.dart';
 import '../widgets/error_snackbar.dart';
 import 'package:share_plus/share_plus.dart';
 import '../services/connectivity_service.dart';
-import 'dart:developer' as developer;
 class ScheduleScreen extends StatefulWidget {
   const ScheduleScreen({super.key});
 
@@ -497,6 +494,27 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       floatingActionButton: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // Кнопка поделиться
+          if (_searchQuery.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8.0),
+              child: FloatingActionButton(
+                heroTag: "shareBtn",
+                onPressed: _shareSchedule,
+                backgroundColor: Theme.of(context).brightness == Brightness.dark
+                    ? const Color(0xFF194874).withOpacity(0.8)
+                    : const Color(0xFFFFFFFF).withOpacity(0.6), // Полупрозрачный в светлой теме
+                elevation: 2,
+                child: Icon(
+                  Icons.share,
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? Colors.white
+                      : const Color(0xFF194874),
+                ),
+              ),
+            ),
+          
+          // Кнопка обновления
           Consumer<ScheduleProvider>(
             builder: (context, provider, child) {
               return FloatingActionButton(
@@ -504,11 +522,15 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                 onPressed: provider.isOffline ? null : () => provider.updateSchedule(),
                 backgroundColor: provider.isOffline 
                     ? Colors.grey 
-                    : buttonColor,
-                elevation: 4,
+                    : (Theme.of(context).brightness == Brightness.dark
+                        ? const Color(0xFF194874).withOpacity(0.8)
+                        : const Color(0xFFFFFFFF).withOpacity(0.6)), // Полупрозрачный в светлой теме
+                elevation: 2,
                 child: Icon(
                   Icons.refresh,
-                  color: isDarkMode ? Colors.white : const Color(0xFF194874),
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? Colors.white
+                      : const Color(0xFF194874),
                 ),
               );
             },

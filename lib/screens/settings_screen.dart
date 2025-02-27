@@ -8,6 +8,7 @@ import '../providers/schedule_provider.dart';
 import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import '../main.dart';
+import 'package:intl/intl.dart' as intl;
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -51,10 +52,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _loadLastUpdateInfo() async {
-    final info = await context.read<ScheduleProvider>().getLastUpdateInfo();
-    setState(() {
-      _lastUpdateInfo = info;
-    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final lastUpdateStr = prefs.getString('last_schedule_update');
+      
+      if (lastUpdateStr != null) {
+        final lastUpdate = DateTime.parse(lastUpdateStr);
+        final now = DateTime.now();
+        final diff = now.difference(lastUpdate);
+        
+        setState(() {
+          if (diff.inMinutes < 1) {
+            _lastUpdateInfo = "Обновлено только что";
+          } else if (diff.inMinutes < 60) {
+            _lastUpdateInfo = "Обновлено ${diff.inMinutes} мин. назад";
+          } else if (diff.inHours < 24) {
+            _lastUpdateInfo = "Обновлено ${diff.inHours} ч. назад";
+          } else {
+            final formatter = intl.DateFormat('dd.MM.yyyy HH:mm', 'ru_RU');
+            _lastUpdateInfo = "Обновлено ${formatter.format(lastUpdate)}";
+          }
+        });
+      } else {
+        setState(() {
+          _lastUpdateInfo = "Нет данных об обновлении";
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _lastUpdateInfo = "Ошибка получения информации";
+      });
+    }
   }
 
   Future<void> _calculateCacheSize() async {

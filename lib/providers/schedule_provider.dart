@@ -13,7 +13,8 @@ class ScheduleProvider extends ChangeNotifier {
   final ParserService _parser = ParserService();
   final DatabaseService _db = DatabaseService();
   
-  Map<String, Map<String, List<ScheduleItem>>>? _scheduleData;
+  Map<String, Map<String, List<ScheduleItem>>>? _currentScheduleData;
+  Map<String, Map<String, List<ScheduleItem>>>? _fullScheduleData;
   List<String> _groups = [];
   List<String> _teachers = [];
   String? _error;
@@ -28,11 +29,12 @@ class ScheduleProvider extends ChangeNotifier {
   bool _showSuccess = false;
   String? _successMessage;
   bool _isUpdating = false;
-  bool _isOffline = false;  // Добавляем поле для отслеживания офлайн режима
+  bool _isOffline = false;
   static DateTime? _lastUpdateTime;
   Timer? _connectivityCheckTimer;
 
-  Map<String, Map<String, List<ScheduleItem>>>? get scheduleData => _scheduleData;
+  Map<String, Map<String, List<ScheduleItem>>>? get scheduleData => _currentScheduleData;
+  Map<String, Map<String, List<ScheduleItem>>>? get fullScheduleData => _fullScheduleData;
   List<String> get groups => _groups;
   List<String> get teachers => _teachers;
   String? get error => _error;
@@ -48,7 +50,6 @@ class ScheduleProvider extends ChangeNotifier {
   bool get isOffline => _isOffline;
 
   ScheduleProvider() {
-    // Проверяем подключение каждые 5 секунд
     _connectivityCheckTimer = Timer.periodic(
       const Duration(seconds: 5),
       (_) => _checkConnectivity(),
@@ -86,16 +87,18 @@ class ScheduleProvider extends ChangeNotifier {
     try {
       _updateStatus('Загрузка расписания...');
       
-      // Проверяем подключение
       final connectivityService = ConnectivityService();
       final isOnline = await connectivityService.isOnline();
       _isOffline = !isOnline;
       notifyListeners();
       
-      // Сначала пробуем загрузить из кэша
-      final cached = await _db.getSchedule();
-      if (cached.isNotEmpty && _mounted) {
-        _scheduleData = cached;
+      // Загружаем оба типа расписания
+      final currentSchedule = await _db.getCurrentSchedule();
+      final archiveSchedule = await _db.getArchiveSchedule();
+      
+      if ((currentSchedule.isNotEmpty || archiveSchedule.isNotEmpty) && _mounted) {
+        _currentScheduleData = currentSchedule;
+        _fullScheduleData = archiveSchedule;
         notifyListeners();
         
         if (!isOnline) {
@@ -106,7 +109,7 @@ class ScheduleProvider extends ChangeNotifier {
       }
 
       if (!isOnline) {
-        if (cached.isEmpty) {
+        if (currentSchedule.isEmpty && archiveSchedule.isEmpty) {
           _handleError(
             'Нет данных',
             details: 'Для первой загрузки требуется подключение к интернету',
@@ -115,8 +118,8 @@ class ScheduleProvider extends ChangeNotifier {
         return;
       }
 
-      final shouldUpdate = await _db.shouldUpdateSchedule();
-      if (shouldUpdate || _scheduleData == null || _scheduleData!.isEmpty) {
+      final shouldUpdate = await shouldUpdateSchedule();
+      if (shouldUpdate || _currentScheduleData == null || _currentScheduleData!.isEmpty) {
         await updateSchedule(silent: true);
       } else {
         _isLoaded = true;
@@ -133,38 +136,6 @@ class ScheduleProvider extends ChangeNotifier {
   }
 
   Future<void> updateSchedule({bool silent = false}) async {
-    debugPrint('🔄 Запрос на обновление расписания');
-    debugPrint('Тихий режим: $silent');
-    debugPrint('Офлайн режим: $_isOffline');
-
-    final connectivityService = ConnectivityService();
-    final isOnline = await connectivityService.isOnline();
-    
-    debugPrint('📡 Статус подключения: ${isOnline ? "онлайн" : "офлайн"}');
-
-    if (!isOnline) {
-      _isOffline = true;
-      notifyListeners();
-      debugPrint('❌ Нет подключения к интернету');
-      return;
-    }
-
-    _isOffline = false;
-
-    if (_lastUpdateTime != null && 
-        DateTime.now().difference(_lastUpdateTime!) < const Duration(seconds: 5)) {
-      developer.log('Слишком частые обновления, подождите');
-      return;
-    }
-
-    if (_isUpdating) {
-      developer.log('Обновление уже выполняется');
-      return;
-    }
-
-    _isUpdating = true;
-    _lastUpdateTime = DateTime.now();
-
     if (!silent) {
       _isLoading = true;
       _updateStatus('Обновление расписания...');
@@ -172,16 +143,24 @@ class ScheduleProvider extends ChangeNotifier {
     
     try {
       final result = await compute(_parseScheduleIsolate, _parser.url);
-      debugPrint('📦 Результат парсинга: ${result.$1 != null ? "успешно" : "ошибка"}');
       
       if (result.$1 != null) {
-        await _db.saveSchedule(result.$1!);
-        await _db.saveGroupsAndTeachers(result.$2, result.$3);
-        await _db.updateLastUpdateTime();
+        _currentScheduleData = result.$1;
+        await _db.saveCurrentSchedule(_currentScheduleData!);
         
-        _scheduleData = result.$1;
+        await _db.archiveSchedule(_currentScheduleData!);
+        
+        _fullScheduleData = await _db.getArchiveSchedule();
+        
         _groups = result.$2;
         _teachers = result.$3;
+        
+        await _db.saveGroupsAndTeachers(_groups, _teachers);
+        
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('last_schedule_update', DateTime.now().toIso8601String());
+        
+        await _cleanOldSchedule();
         
         _isLoaded = true;
         _error = null;
@@ -191,10 +170,7 @@ class ScheduleProvider extends ChangeNotifier {
           _successMessage = 'Расписание успешно обновлено';
         }
       } else if (result.$4 != null) {
-        _handleError(
-          'Ошибка обновления',
-          details: result.$4,
-        );
+        _handleError('Ошибка обновления', details: result.$4);
       }
     } catch (e) {
       debugPrint('❌ Ошибка обновления: $e');
@@ -218,38 +194,58 @@ class ScheduleProvider extends ChangeNotifier {
   }
 
   Future<void> _cleanOldSchedule() async {
-    if (_scheduleData == null) return;
-
-    final now = DateTime.now();
-    final cutoffDate = now.subtract(Duration(days: _storageDays));
-
-    _scheduleData!.removeWhere((dateStr, _) {
-      try {
-        final parts = dateStr.split('-');
-        if (parts.length != 2) return false;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _storageDays = prefs.getInt('schedule_storage_days') ?? 30;
+      
+      // Очищаем старые данные из архива
+      await _db.cleanOldArchive(_storageDays);
+      
+      // Обновляем локальное состояние
+      if (_fullScheduleData != null) {
+        final now = DateTime.now();
+        final cutoffDate = now.subtract(Duration(days: _storageDays));
         
-        final day = int.tryParse(parts[0]);
-        if (day == null) return false;
-        
-        final monthMap = {
-          'янв': 1, 'фев': 2, 'мар': 3, 'апр': 4,
-          'май': 5, 'июн': 6, 'июл': 7, 'авг': 8,
-          'сен': 9, 'окт': 10, 'ноя': 11, 'дек': 12
-        };
-        
-        final month = monthMap[parts[1].toLowerCase()];
-        if (month == null) return false;
-        
-        final date = DateTime(now.year, month, day);
-        
-        return date.isBefore(cutoffDate);
-      } catch (e) {
-        return false;
+        _fullScheduleData!.removeWhere((dateStr, _) {
+          try {
+            final date = _parseDateString(dateStr);
+            return date.isBefore(cutoffDate);
+          } catch (e) {
+            return false;
+          }
+        });
       }
-    });
+      
+      // Перезагружаем архивное расписание после очистки
+      _fullScheduleData = await _db.getArchiveSchedule();
+      
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Ошибка при очистке старого расписания: $e');
+    }
+  }
 
-    await _db.cleanOldSchedule(_storageDays);
-    notifyListeners();
+  DateTime _parseDateString(String dateStr) {
+    final parts = dateStr.split(' ');
+    final day = int.parse(parts[0]);
+    
+    final monthMap = {
+      'янв': 1, 'фев': 2, 'мар': 3, 'апр': 4,
+      'май': 5, 'июн': 6, 'июл': 7, 'авг': 8,
+      'сен': 9, 'окт': 10, 'ноя': 11, 'дек': 12
+    };
+    
+    final monthStr = parts[1].toLowerCase().substring(0, 3);
+    final month = monthMap[monthStr] ?? 1;
+    
+    final now = DateTime.now();
+    var year = now.year;
+    
+    if (month < now.month) {
+      year++;
+    }
+    
+    return DateTime(year, month, day);
   }
 
   Future<void> loadGroupsAndTeachers() async {
@@ -331,7 +327,6 @@ class ScheduleProvider extends ChangeNotifier {
     super.dispose();
   }
 
-  // Статический метод для выполнения в изоляте
   static Future<(Map<String, Map<String, List<ScheduleItem>>>?, List<String>, List<String>, String?)> 
       _parseScheduleIsolate(String url) async {
     final parser = ParserService();
@@ -342,31 +337,26 @@ class ScheduleProvider extends ChangeNotifier {
     try {
       final now = DateTime.now();
       
-      // Не обновляем в воскресенье
       if (now.weekday == DateTime.sunday) {
         return false;
       }
       
-      // Обновляем только в рабочее время (7:00 - 19:59)
       if (now.hour < 7 || now.hour >= 20) {
         return false;
       }
       
       final lastUpdate = await getLastUpdateTime();
       
-      // Если никогда не обновлялось
       if (lastUpdate == null) {
         return true;
       }
       
-      // Если последнее обновление было в другой день
       if (lastUpdate.day != now.day || 
           lastUpdate.month != now.month || 
           lastUpdate.year != now.year) {
         return true;
       }
       
-      // Обновляем каждые 3 часа в рабочее время
       final hoursSinceLastUpdate = now.difference(lastUpdate).inHours;
       if (hoursSinceLastUpdate >= 3) {
         return true;
@@ -405,5 +395,9 @@ class ScheduleProvider extends ChangeNotifier {
         await updateSchedule(silent: true);
       }
     }
+  }
+
+  Map<String, Map<String, List<ScheduleItem>>>? getScheduleForCalendar() {
+    return _fullScheduleData;
   }
 }

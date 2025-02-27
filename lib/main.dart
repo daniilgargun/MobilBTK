@@ -10,9 +10,7 @@ import 'services/database_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
 import 'services/connectivity_service.dart';
-import 'dart:developer' as developer;  // Изменить импорт
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -77,8 +75,20 @@ class MyAppState extends State<MyApp> {
 
   Future<void> _loadThemeSettings() async {
     final prefs = await SharedPreferences.getInstance();
+    final savedTheme = prefs.getBool('is_dark_mode');
+    
     setState(() {
-      _isDarkMode = prefs.getBool('is_dark_mode');
+      // Если тема ещё не была сохранена (первый запуск),
+      // используем системную тему
+      if (savedTheme == null) {
+        final window = WidgetsBinding.instance.window;
+        final brightness = window.platformBrightness;
+        _isDarkMode = brightness == Brightness.dark;
+        // Сохраняем выбранную тему
+        prefs.setBool('is_dark_mode', _isDarkMode!);
+      } else {
+        _isDarkMode = savedTheme;
+      }
       _useDynamicColors = prefs.getBool('use_dynamic_colors') ?? false;
     });
   }
@@ -92,6 +102,17 @@ class MyAppState extends State<MyApp> {
 
   @override
   Widget build(BuildContext context) {
+    // Если тема ещё не загружена, показываем загрузочный экран
+    if (_isDarkMode == null) {
+      return const MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: CircularProgressIndicator(),
+          ),
+        ),
+      );
+    }
+
     return MaterialApp(
       title: 'Мобильное приложение',
       theme: ThemeData(

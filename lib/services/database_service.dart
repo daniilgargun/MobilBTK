@@ -31,7 +31,20 @@ class DatabaseService {
 
   Future<void> _createTables(Database db) async {
     await db.execute('''
-      CREATE TABLE schedule (
+      CREATE TABLE current_schedule (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        group_name TEXT NOT NULL,
+        lesson_number INTEGER NOT NULL,
+        subject TEXT NOT NULL,
+        teacher TEXT NOT NULL,
+        classroom TEXT NOT NULL,
+        subgroup TEXT
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE archive_schedule (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         date TEXT NOT NULL,
         group_name TEXT NOT NULL,
@@ -81,15 +94,15 @@ class DatabaseService {
     });
   }
 
-  Future<void> saveSchedule(Map<String, Map<String, List<ScheduleItem>>> scheduleData) async {
+  Future<void> saveCurrentSchedule(Map<String, Map<String, List<ScheduleItem>>> scheduleData) async {
     final db = await database;
     await db.transaction((txn) async {
-      await txn.delete('schedule');
-
+      await txn.delete('current_schedule');
+      
       for (var date in scheduleData.keys) {
         for (var group in scheduleData[date]!.keys) {
           for (var item in scheduleData[date]![group]!) {
-            await txn.insert('schedule', {
+            await txn.insert('current_schedule', {
               'date': date,
               'group_name': group,
               'lesson_number': item.lessonNumber,
@@ -104,51 +117,66 @@ class DatabaseService {
     });
   }
 
-  Future<Map<String, Map<String, List<ScheduleItem>>>> getSchedule() async {
-    if (_scheduleCache != null) {
-      return _scheduleCache!;
-    }
-
+  Future<void> archiveSchedule(Map<String, Map<String, List<ScheduleItem>>> scheduleData) async {
     final db = await database;
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_schedule_date ON schedule(date)');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_schedule_group ON schedule(group_name)');
-    
-    final scheduleData = <String, Map<String, List<ScheduleItem>>>{};
-    
     await db.transaction((txn) async {
-      final dates = await txn.rawQuery('SELECT DISTINCT date FROM schedule ORDER BY date');
-      
-      for (var dateMap in dates) {
-        final date = dateMap['date'] as String;
-        scheduleData[date] = {};
-        
-        final groups = await txn.rawQuery(
-          'SELECT DISTINCT group_name FROM schedule WHERE date = ? ORDER BY group_name',
-          [date],
+      for (var date in scheduleData.keys) {
+        final existing = await txn.query(
+          'archive_schedule',
+          where: 'date = ?',
+          whereArgs: [date],
         );
         
-        for (var groupMap in groups) {
-          final group = groupMap['group_name'] as String;
-          final lessons = await txn.query(
-            'schedule',
-            where: 'date = ? AND group_name = ?',
-            whereArgs: [date, group],
-            orderBy: 'lesson_number',
-          );
-          
-          scheduleData[date]![group] = lessons.map((map) => ScheduleItem(
-            group: map['group_name'] as String,
-            lessonNumber: map['lesson_number'] as int,
-            subject: map['subject'] as String,
-            teacher: map['teacher'] as String,
-            classroom: map['classroom'] as String,
-            subgroup: map['subgroup'] as String?,
-          )).toList();
+        if (existing.isEmpty) {
+          for (var group in scheduleData[date]!.keys) {
+            for (var item in scheduleData[date]![group]!) {
+              await txn.insert('archive_schedule', {
+                'date': date,
+                'group_name': group,
+                'lesson_number': item.lessonNumber,
+                'subject': item.subject,
+                'teacher': item.teacher,
+                'classroom': item.classroom,
+                'subgroup': item.subgroup,
+              });
+            }
+          }
         }
       }
     });
+  }
+
+  Future<Map<String, Map<String, List<ScheduleItem>>>> getCurrentSchedule() async {
+    return _getScheduleFromTable('current_schedule');
+  }
+
+  Future<Map<String, Map<String, List<ScheduleItem>>>> getArchiveSchedule() async {
+    return _getScheduleFromTable('archive_schedule');
+  }
+
+  Future<Map<String, Map<String, List<ScheduleItem>>>> _getScheduleFromTable(String tableName) async {
+    final db = await database;
+    final scheduleData = <String, Map<String, List<ScheduleItem>>>{};
     
-    _scheduleCache = scheduleData;
+    final List<Map<String, dynamic>> results = await db.query(tableName);
+    
+    for (var row in results) {
+      final date = row['date'] as String;
+      final group = row['group_name'] as String;
+      
+      scheduleData.putIfAbsent(date, () => {});
+      scheduleData[date]!.putIfAbsent(group, () => []);
+      
+      scheduleData[date]![group]!.add(ScheduleItem(
+        group: group,
+        lessonNumber: row['lesson_number'] as int,
+        subject: row['subject'] as String,
+        teacher: row['teacher'] as String,
+        classroom: row['classroom'] as String,
+        subgroup: row['subgroup'] as String?,
+      ));
+    }
+    
     return scheduleData;
   }
 
@@ -198,7 +226,7 @@ class DatabaseService {
       final cutoffDate = DateTime.now().subtract(Duration(days: days));
       
       await db.delete(
-        'schedule',
+        'current_schedule',
         where: 'date < ?',
         whereArgs: [cutoffDate.toIso8601String()],
       );
@@ -208,6 +236,17 @@ class DatabaseService {
     } catch (e) {
       debugPrint('Ошибка при очистке старого расписания: $e');
     }
+  }
+
+  Future<void> cleanOldArchive(int days) async {
+    final db = await database;
+    final cutoffDate = DateTime.now().subtract(Duration(days: days));
+    
+    await db.delete(
+      'archive_schedule',
+      where: 'date < ?',
+      whereArgs: [cutoffDate.toIso8601String()],
+    );
   }
 
   Future<void> recreateDatabase() async {
