@@ -409,7 +409,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final month = monthNames[monthStr] ?? monthStr;
     final weekday = _getWeekday(day, monthStr);
     
-    return '$day $month ($weekday)';
+    return '$day $month';
   }
 
   String _getWeekday(int day, String monthStr) {

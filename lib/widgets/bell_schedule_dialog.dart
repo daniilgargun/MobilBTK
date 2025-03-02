@@ -8,31 +8,57 @@ class BellScheduleDialog extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
           // Номер пары по центру
           SizedBox(
-            width: 45,
+            width: 30,
             child: Center(
-              child: Text(
-                title,
-                style: const TextStyle(fontWeight: FontWeight.w500)
+              child: Builder(
+                builder: (context) => Text(
+                  title,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w500,
+                    fontSize: 13,
+                    // Используем цвет в зависимости от темы
+                    color: Theme.of(context).brightness == Brightness.light 
+                        ? Colors.black87 
+                        : Colors.white,
+                  ),
+                ),
               ),
             ),
           ),
-          // Времена в два ряда с монопространственным шрифтом
+          const SizedBox(width: 4),
+          // Времена в два ряда
           Expanded(
-            child: DefaultTextStyle(
-              style: const TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 14,
-                height: 1.2,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(time1),
-                  Text(time2),
-                ],
+            child: Builder(
+              builder: (context) => DefaultTextStyle(
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 13,
+                  height: 1.2,
+                  letterSpacing: -0.5,
+                  // Используем цвет в зависимости от темы
+                  color: Theme.of(context).brightness == Brightness.light 
+                      ? Colors.black87 
+                      : Colors.white,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      time1,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                    Text(
+                      time2,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -140,6 +166,9 @@ class BellScheduleDialog extends StatelessWidget {
   }
 
   Widget _buildDaySchedule(BuildContext context, String title, List<(String, String, String)> times, {String? specialHour}) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -147,7 +176,9 @@ class BellScheduleDialog extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: 8.0),
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3),
+            color: (isDark 
+                ? colorScheme.primaryContainer.withOpacity(0.2)
+                : colorScheme.primaryContainer.withOpacity(0.3)),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Text(
@@ -155,26 +186,28 @@ class BellScheduleDialog extends StatelessWidget {
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.bold,
-              color: Theme.of(context).colorScheme.primary,
+              color: colorScheme.primary,
             ),
           ),
         ),
         const SizedBox(height: 5),
-        IntrinsicHeight( // Добавляем для выравнивания высоты колонок
+        IntrinsicHeight(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Левая колонка (1-3 пары)
-              Expanded(
+              Flexible(
+                fit: FlexFit.tight,
                 child: Column(
                   children: times.take(3).map((time) => 
                     _buildTimeRow(time.$1, time.$2, time.$3)
                   ).toList(),
                 ),
               ),
-              const SizedBox(width: 16), // Увеличиваем расстояние между колонками
+              const SizedBox(width: 8),
               // Правая колонка (4-6 пары)
-              Expanded(
+              Flexible(
+                fit: FlexFit.tight,
                 child: Column(
                   children: times.skip(3).take(3).map((time) => 
                     _buildTimeRow(time.$1, time.$2, time.$3)
@@ -190,13 +223,15 @@ class BellScheduleDialog extends StatelessWidget {
             margin: const EdgeInsets.only(top: 8),
             padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
             decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3),
+              color: (isDark 
+                  ? colorScheme.primaryContainer.withOpacity(0.2)
+                  : colorScheme.primaryContainer.withOpacity(0.3)),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
               specialHour,
               style: TextStyle(
-                color: Theme.of(context).colorScheme.primary,
+                color: colorScheme.primary,
                 fontWeight: FontWeight.w500,
               ),
             ),
