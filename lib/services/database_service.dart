@@ -11,7 +11,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 class DatabaseService {
   static Database? _database;
   static const int _databaseVersion = 2;
-  static Map<String, Map<String, List<ScheduleItem>>>? _scheduleCache;
+  
+  // Кэш для данных
+  static Map<String, Map<String, List<ScheduleItem>>> _scheduleCache = {};
+  static Map<String, List<String>> _listsCache = {};
+  static bool _isInitialized = false;
 
   Future<Database> get database async {
     if (_database != null) return _database!;
@@ -394,5 +398,63 @@ class DatabaseService {
     final prefs = await SharedPreferences.getInstance();
     final now = DateTime.now().toIso8601String();
     await prefs.setString('last_update_time', now);
+  }
+
+  // Инициализация с предварительной загрузкой
+  Future<void> _initialize() async {
+    if (_isInitialized) return;
+
+    final db = await database;
+    // Предварительно загружаем все основные данные
+    await Future.wait([
+      _preloadSchedule(db),
+      _preloadGroups(db),
+      _preloadTeachers(db),
+    ]);
+
+    _isInitialized = true;
+  }
+
+  // Предварительная загрузка расписания
+  Future<void> _preloadSchedule(Database db) async {
+    final List<Map<String, dynamic>> maps = await db.query('current_schedule');
+    _scheduleCache = await _getScheduleFromTable('current_schedule');
+  }
+
+  // Предварительная загрузка групп
+  Future<void> _preloadGroups(Database db) async {
+    final List<Map<String, dynamic>> maps = await db.query('groups');
+    _listsCache['groups'] = maps.map((e) => e['name'] as String).toList();
+  }
+
+  // Предварительная загрузка преподавателей
+  Future<void> _preloadTeachers(Database db) async {
+    final List<Map<String, dynamic>> maps = await db.query('teachers');
+    _listsCache['teachers'] = maps.map((e) => e['name'] as String).toList();
+  }
+
+  // Получение расписания из кэша
+  Future<Map<String, Map<String, List<ScheduleItem>>>> getSchedule() async {
+    await _initialize();
+    return _scheduleCache;
+  }
+
+  // Получение групп из кэша
+  Future<List<String>> getGroups() async {
+    await _initialize();
+    return _listsCache['groups'] ?? [];
+  }
+
+  // Получение преподавателей из кэша
+  Future<List<String>> getTeachers() async {
+    await _initialize();
+    return _listsCache['teachers'] ?? [];
+  }
+
+  // Очистка кэша при обновлении данных
+  void clearCache() {
+    _scheduleCache.clear();
+    _listsCache.clear();
+    _isInitialized = false;
   }
 } 

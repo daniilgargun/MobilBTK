@@ -20,7 +20,6 @@ class BellScheduleDialog extends StatelessWidget {
                   style: TextStyle(
                     fontWeight: FontWeight.w500,
                     fontSize: 13,
-                    // Используем цвет в зависимости от темы
                     color: Theme.of(context).brightness == Brightness.light 
                         ? Colors.black87 
                         : Colors.white,
@@ -39,7 +38,6 @@ class BellScheduleDialog extends StatelessWidget {
                   fontSize: 13,
                   height: 1.2,
                   letterSpacing: -0.5,
-                  // Используем цвет в зависимости от темы
                   color: Theme.of(context).brightness == Brightness.light 
                       ? Colors.black87 
                       : Colors.white,
@@ -195,7 +193,6 @@ class BellScheduleDialog extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Левая колонка (1-3 пары)
               Flexible(
                 fit: FlexFit.tight,
                 child: Column(
@@ -205,7 +202,6 @@ class BellScheduleDialog extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              // Правая колонка (4-6 пары)
               Flexible(
                 fit: FlexFit.tight,
                 child: Column(

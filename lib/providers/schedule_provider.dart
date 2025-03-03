@@ -33,6 +33,11 @@ class ScheduleProvider extends ChangeNotifier {
   static DateTime? _lastUpdateTime;
   Timer? _connectivityCheckTimer;
 
+  // Кэш для подготовленных данных
+  Map<String, List<ScheduleItem>> _preparedScheduleCache = {};
+  Map<String, List<ScheduleItem>> _filteredCache = {};
+  bool _isDataPrepared = false;
+
   Map<String, Map<String, List<ScheduleItem>>>? get scheduleData => _currentScheduleData;
   Map<String, Map<String, List<ScheduleItem>>>? get fullScheduleData => _fullScheduleData;
   List<String> get groups => _groups;
@@ -149,22 +154,22 @@ class ScheduleProvider extends ChangeNotifier {
     }
     
     try {
-      debugPrint('🔄 Начало обновления расписания');
+      
       final result = await compute(_parseScheduleIsolate, _parser.url);
       
       if (result.$1 != null) {
-        debugPrint('📅 Полученные даты: ${result.$1!.keys.join(", ")}');
+        
         _currentScheduleData = result.$1;
         
-        debugPrint('💾 Сохранение текущего расписания');
+        
         await _db.saveCurrentSchedule(_currentScheduleData!);
         
-        debugPrint('📚 Архивация расписания');
+        
         await _db.archiveSchedule(_currentScheduleData!);
         
-        debugPrint('📖 Загрузка архивного расписания');
+        
         _fullScheduleData = await _db.getArchiveSchedule();
-        debugPrint('📅 Даты в архиве: ${_fullScheduleData?.keys.join(", ")}');
+        
         
         _groups = result.$2;
         _teachers = result.$3;
@@ -240,7 +245,7 @@ class ScheduleProvider extends ChangeNotifier {
   }
 
   DateTime _parseDateString(String dateStr) {
-    debugPrint('🔍 Парсинг даты: $dateStr');
+    
     final parts = dateStr.split('-');
     if (parts.length != 2) {
       debugPrint('❌ Неверный формат даты: $dateStr');
@@ -277,7 +282,7 @@ class ScheduleProvider extends ChangeNotifier {
       year++;
     }
     
-    debugPrint('✅ Распознана дата: $day.$month.$year');
+    
     return DateTime(year, month, day);
   }
 
@@ -363,7 +368,8 @@ class ScheduleProvider extends ChangeNotifier {
   static Future<(Map<String, Map<String, List<ScheduleItem>>>?, List<String>, List<String>, String?)> 
       _parseScheduleIsolate(String url) async {
     final parser = ParserService();
-    return await parser.parseSchedule();
+    final result = await parser.parseSchedule();
+    return result;
   }
 
   Future<bool> shouldUpdateSchedule() async {
@@ -432,5 +438,64 @@ class ScheduleProvider extends ChangeNotifier {
 
   Map<String, Map<String, List<ScheduleItem>>>? getScheduleForCalendar() {
     return _fullScheduleData;
+  }
+
+  // Подготавливаем данные заранее
+  Future<void> _prepareData() async {
+    if (_isDataPrepared) return;
+    
+    _preparedScheduleCache.clear();
+    if (_currentScheduleData != null) {
+      for (var date in _currentScheduleData!.keys) {
+        final daySchedule = _currentScheduleData![date]!;
+        final allLessons = <ScheduleItem>[];
+        
+        for (var groupLessons in daySchedule.values) {
+          allLessons.addAll(groupLessons);
+        }
+        
+        // Предварительная сортировка
+        allLessons.sort((a, b) => a.lessonNumber.compareTo(b.lessonNumber));
+        _preparedScheduleCache[date] = allLessons;
+      }
+    }
+    _isDataPrepared = true;
+  }
+
+  // Получаем подготовленные данные для даты
+  List<ScheduleItem> getPreparedSchedule(String date) {
+    return _preparedScheduleCache[date] ?? [];
+  }
+
+  // Получаем отфильтрованные данные
+  List<ScheduleItem> getFilteredSchedule(String date, String query) {
+    final cacheKey = '${date}_$query';
+    
+    if (_filteredCache.containsKey(cacheKey)) {
+      return _filteredCache[cacheKey]!;
+    }
+    
+    final lessons = getPreparedSchedule(date);
+    if (query.isEmpty) {
+      return lessons;
+    }
+    
+    final lowercaseQuery = query.toLowerCase();
+    final filtered = lessons.where((lesson) =>
+      lesson.group.toLowerCase().contains(lowercaseQuery) ||
+      lesson.teacher.toLowerCase().contains(lowercaseQuery) ||
+      lesson.classroom.toLowerCase().contains(lowercaseQuery) ||
+      lesson.subject.toLowerCase().contains(lowercaseQuery)
+    ).toList();
+    
+    _filteredCache[cacheKey] = filtered;
+    return filtered;
+  }
+
+  @override
+  void clearCache() {
+    _filteredCache.clear();
+    _preparedScheduleCache.clear();
+    _isDataPrepared = false;
   }
 }

@@ -12,6 +12,9 @@ class ParserService {
   static bool _isLoading = false;
   static DateTime? _lastLoadTime;
 
+  // Кэш для промежуточных результатов парсинга
+  static Map<String, dynamic> _parseCache = {};
+
   // Парсит расписание с сайта колледжа
   // Использую библиотеку html для парсинга
 
@@ -21,83 +24,43 @@ class ParserService {
   // - список групп
   // - список преподов
   // - ошибку если что-то пошло не так
-  Future<(Map<String, Map<String, List<ScheduleItem>>>?, List<String>, List<String>, String?)> parseSchedule() async {
-    // Проверяем, не было ли загрузки в последние 5 секунд
-    if (_lastLoadTime != null && 
-        DateTime.now().difference(_lastLoadTime!) < const Duration(seconds: 5)) {
-      developer.log('Слишком частые запросы, подождите');
-      return (null, <String>[], <String>[], null);
-    }
-
-    // Предотвращаем параллельные загрузки
-    if (_isLoading) {
-      developer.log('Загрузка уже выполняется');
-      return (null, <String>[], <String>[], null);
-    }
-
-    _isLoading = true;
-    _lastLoadTime = DateTime.now();
-
+  Future<(Map<String, Map<String, List<ScheduleItem>>>, List<String>, List<String>, String?)> parseSchedule() async {
     try {
-      debugPrint('🔄 Начало парсинга расписания');
       final response = await http.get(Uri.parse(url));
-      debugPrint('📥 Получен ответ от сервера: ${response.statusCode}');
-
-      if (response.statusCode == 200) {
-        final document = html.parse(response.body);
-        debugPrint('📄 Документ успешно распарсен');
-        
-        final tables = document.getElementsByTagName('table');
-        
-        if (tables.isEmpty) {
-          developer.log('Таблицы с расписанием не найдены');
-          return (null, <String>[], <String>[], "❌ Расписание не найдено");
-        }
-
-        final scheduleData = <String, Map<String, List<ScheduleItem>>>{};
-        final groupSet = <String>{};
-        final teacherSet = <String>{};
-
-        for (var table in tables) {
-          _parseTable(table, scheduleData, groupSet, teacherSet);
-          // Даем время другим операциям
-          await Future.delayed(const Duration(milliseconds: 1));
-        }
-
-        if (scheduleData.isEmpty) {
-          developer.log('Расписание пустое');
-          return (null, <String>[], <String>[], "❌ Расписание пустое");
-        }
-
-        developer.log(
-          'Расписание успешно загружено',
-          error: {
-            'Дней': scheduleData.length,
-            'Групп': groupSet.length,
-            'Преподавателей': teacherSet.length,
-          },
-        );
-
-        debugPrint('✅ Парсинг успешно завершен');
-        return (scheduleData, groupSet.toList()..sort(), teacherSet.toList()..sort(), null);
-      } else {
-        debugPrint('❌ Ошибка HTTP: ${response.statusCode}');
-        return (null, <String>[], <String>[], 'Ошибка загрузки данных: ${response.statusCode}');
+      if (response.statusCode != 200) {
+        return (<String, Map<String, List<ScheduleItem>>>{}, <String>[], <String>[], 'Ошибка загрузки: ${response.statusCode}');
       }
+
+      final document = html.parse(response.body);
+      final tables = document.getElementsByTagName('table');
+      final schedule = <String, Map<String, List<ScheduleItem>>>{};
+      final groupSet = <String>{};
+      final teacherSet = <String>{};
+      var daysFound = 0;
+
+      for (var table in tables) {
+        daysFound += _parseTableData(table, schedule, groupSet, teacherSet);
+      }
+
+      if (daysFound == 0) {
+        return (<String, Map<String, List<ScheduleItem>>>{}, <String>[], <String>[], 'Новых дней в расписании не найдено');
+      }
+
+      return (schedule, groupSet.toList()..sort(), teacherSet.toList()..sort(), null);
     } catch (e) {
-      debugPrint('❌ Ошибка парсинга: $e');
-      return (null, <String>[], <String>[], 'Ошибка обработки данных: $e');
-    } finally {
-      _isLoading = false;
+      if (e is http.ClientException) {
+        return (<String, Map<String, List<ScheduleItem>>>{}, <String>[], <String>[], 'Ошибка подключения к серверу колледжа');
+      }
+      return (<String, Map<String, List<ScheduleItem>>>{}, <String>[], <String>[], 'Ошибка при загрузке расписания');
     }
   }
 
-  // Парсит одну таблицу с расписанием
-  void _parseTable(Element table, Map<String, Map<String, List<ScheduleItem>>> scheduleData, 
-                  Set<String> groupSet, Set<String> teacherSet) {
+  int _parseTableData(Element table, Map<String, Map<String, List<ScheduleItem>>> scheduleData, 
+                     Set<String> groupSet, Set<String> teacherSet) {
     final rows = table.getElementsByTagName('tr');
     String currentDay = "";
     String currentGroup = "";
+    var newDaysCount = 0;
 
     for (var row in rows) {
       final cells = row.getElementsByTagName('td');
@@ -106,17 +69,20 @@ class ParserService {
       final dateCell = cells[0].text.trim();
       if (dateCell.isNotEmpty) {
         try {
-          currentDay = dateCell.replaceAll(RegExp(r'[\(\)]'), '');
-          scheduleData.putIfAbsent(currentDay, () => {});
+          currentDay = _extractDate(dateCell);
+          if (!scheduleData.containsKey(currentDay)) {
+            newDaysCount++;
+            scheduleData[currentDay] = {};
+          }
 
-          final groupCell = row.querySelector('.ari-tbl-col-1');
-          if (groupCell != null) {
-            currentGroup = groupCell.text.trim();
+          final groupCell = cells.length > 1 ? cells[1].text.trim() : "";
+          if (groupCell.isNotEmpty) {
+            currentGroup = groupCell;
             groupSet.add(currentGroup);
 
-            final lessonData = _extractLessonData(row);
-            if (lessonData != null) {
-              final lessonWithGroup = lessonData.copyWith(group: currentGroup);
+            final lesson = _extractLessonData(cells);
+            if (lesson != null) {
+              final lessonWithGroup = lesson.copyWith(group: currentGroup);
               scheduleData[currentDay]!.putIfAbsent(currentGroup, () => []);
               scheduleData[currentDay]![currentGroup]!.add(lessonWithGroup);
 
@@ -130,16 +96,22 @@ class ParserService {
         }
       }
     }
+    return newDaysCount;
   }
 
-  // Достает инфу о паре из строки таблицы
-  ScheduleItem? _extractLessonData(Element row) {
+  String _extractDate(String dateCell) {
+    return dateCell.replaceAll(RegExp(r'[\(\)]'), '').trim();
+  }
+
+  ScheduleItem? _extractLessonData(List<Element> cells) {
     try {
-      final number = row.querySelector('.ari-tbl-col-2')?.text.trim() ?? '';
-      final discipline = row.querySelector('.ari-tbl-col-3')?.text.trim() ?? '';
-      final teacher = row.querySelector('.ari-tbl-col-4')?.text.trim() ?? '';
-      final classroom = row.querySelector('.ari-tbl-col-5')?.text.trim() ?? '';
-      final subgroup = row.querySelector('.ari-tbl-col-6')?.text.trim() ?? '';
+      if (cells.length < 6) return null;
+
+      final number = cells[2].text.trim();
+      final discipline = cells[3].text.trim();
+      final teacher = cells[4].text.trim();
+      final classroom = cells[5].text.trim();
+      final subgroup = cells.length > 6 ? cells[6].text.trim() : '';
 
       if (number.isNotEmpty || discipline.isNotEmpty || teacher.isNotEmpty || classroom.isNotEmpty) {
         return ScheduleItem(
@@ -155,5 +127,10 @@ class ParserService {
       developer.log("Ошибка извлечения данных урока:", error: e);
     }
     return null;
+  }
+
+  // Очистка кэша
+  static void clearCache() {
+    _parseCache.clear();
   }
 } 

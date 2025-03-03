@@ -25,6 +25,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   static const EdgeInsets _listPadding = EdgeInsets.all(8);
   static const Duration _animationDuration = Duration(milliseconds: 300);
   bool _hasShownOfflineWarning = false;
+  
+  // Кэш для отфильтрованных данных
+  Map<String, List<ScheduleItem>> _filteredCache = {};
+  
+  // Подготовленные данные для всех дат
+  Map<String, List<ScheduleItem>> _preparedData = {};
 
   @override
   void initState() {
@@ -105,32 +111,207 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   Widget _buildSearchField() {
     return Padding(
       padding: const EdgeInsets.all(16.0),
-      child: TextField(
-        controller: _searchController,
-        onChanged: (value) {
-          setState(() {
-            _searchQuery = value;
-            _saveSearchQuery(value);
-          });
-        },
-        decoration: InputDecoration(
-          labelText: 'Поиск',
-          border: const OutlineInputBorder(),
-          prefixIcon: const Icon(Icons.search_outlined), // Добавлена иконка поиска
-          suffixIcon: _searchQuery.isNotEmpty
-              ? IconButton(
-                  icon: const Icon(Icons.clear),
-                  onPressed: () {
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _searchController,
+                  onChanged: (value) {
                     setState(() {
-                      _searchController.clear();
-                      _searchQuery = '';
-                      _saveSearchQuery('');
+                      _searchQuery = value;
+                      _saveSearchQuery(value);
                     });
                   },
-                )
-              : null,
-        ),
+                  decoration: InputDecoration(
+                    labelText: 'Поиск',
+                    hintText: 'Группа, преподаватель, предмет или кабинет',
+                    border: const OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.search_outlined),
+                    suffixIcon: _searchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            setState(() {
+                              _searchController.clear();
+                              _searchQuery = '';
+                              _saveSearchQuery('');
+                            });
+                          },
+                        )
+                      : null,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.help_outline),
+                onPressed: _showSearchInfo,
+                tooltip: 'Как искать?',
+              ),
+            ],
+          ),
+          if (_searchQuery.isEmpty)
+            Consumer<ScheduleProvider>(
+              builder: (context, provider, child) {
+                // Получаем реальные данные
+                final suggestions = _getRandomSuggestions(provider);
+                if (suggestions.isEmpty) return const SizedBox.shrink();
+
+                return Padding(
+                  padding: const EdgeInsets.only(top: 8.0, left: 4.0),
+                  child: Wrap(
+                    spacing: 8,
+                    children: suggestions.map((suggestion) => 
+                      _buildSearchChip(suggestion)
+                    ).toList(),
+                  ),
+                );
+              },
+            ),
+        ],
       ),
+    );
+  }
+
+  // Получает случайные подсказки из реальных данных
+  List<String> _getRandomSuggestions(ScheduleProvider provider) {
+    final suggestions = <String>{};
+    final random = DateTime.now().millisecondsSinceEpoch;
+    
+    // Получаем реальные данные
+    if (provider.scheduleData != null && provider.scheduleData!.isNotEmpty) {
+      final allItems = <ScheduleItem>[];
+      
+      // Собираем все уроки
+      for (var daySchedule in provider.scheduleData!.values) {
+        for (var groupSchedule in daySchedule.values) {
+          allItems.addAll(groupSchedule);
+        }
+      }
+      
+      if (allItems.isEmpty) return [];
+
+      // Добавляем случайную группу
+      if (provider.groups.isNotEmpty) {
+        suggestions.add(provider.groups[random % provider.groups.length]);
+      }
+      
+      // Добавляем случайного преподавателя
+      if (provider.teachers.isNotEmpty) {
+        suggestions.add(provider.teachers[(random ~/ 2) % provider.teachers.length]);
+      }
+      
+      // Добавляем случайный кабинет
+      final classrooms = allItems.map((e) => e.classroom).toSet().toList();
+      if (classrooms.isNotEmpty) {
+        suggestions.add(classrooms[(random ~/ 3) % classrooms.length]);
+      }
+      
+      // Добавляем случайный предмет
+      final subjects = allItems.map((e) => e.subject).toSet().toList();
+      if (subjects.isNotEmpty) {
+        suggestions.add(subjects[(random ~/ 4) % subjects.length]);
+      }
+    }
+    
+    // Возвращаем до 4 случайных подсказок
+    return suggestions.take(4).toList();
+  }
+
+  // Создает чип для быстрого поиска
+  Widget _buildSearchChip(String label) {
+    return ActionChip(
+      label: Text(label),
+      backgroundColor: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.7),
+      onPressed: () {
+        setState(() {
+          _searchController.text = label;
+          _searchQuery = label;
+          _saveSearchQuery(label);
+        });
+      },
+    );
+  }
+
+  // Показывает информацию о поиске
+  void _showSearchInfo() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.search, color: Theme.of(context).colorScheme.primary),
+            const SizedBox(width: 8),
+            const Text('Как искать?'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildSearchInfoItem(
+              Icons.group,
+              'Группа',
+              'Например: "ПО-41", "по41"',
+            ),
+            const SizedBox(height: 12),
+            _buildSearchInfoItem(
+              Icons.person,
+              'Преподаватель',
+              'По фамилии: "Соловей", "Иванов"',
+            ),
+            const SizedBox(height: 12),
+            _buildSearchInfoItem(
+              Icons.class_,
+              'Предмет',
+              'Например: "Физика", "Математика"',
+            ),
+            const SizedBox(height: 12),
+            _buildSearchInfoItem(
+              Icons.room,
+              'Кабинет',
+              'Номер: "401", "402"',
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Понятно'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Создает элемент в диалоге информации о поиске
+  Widget _buildSearchInfoItem(IconData icon, String title, String example) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 20),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              Text(
+                example,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -212,8 +393,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     final buffer = StringBuffer();
     
     if (lessons.isNotEmpty) {
-      final group = lessons.first.group;
-      buffer.writeln('📚 Расписание группы $group\n');
+      if (_searchQuery.isNotEmpty) {
+        buffer.writeln('🔍 Результаты поиска: $_searchQuery\n');
+      } else {
+        final group = lessons.first.group;
+        buffer.writeln('📚 Расписание группы $group\n');
+      }
     }
     
     buffer.writeln('📅 ${_formatDate(date)}');
@@ -251,6 +436,77 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     return DateTime(DateTime.now().year, month, day);
   }
 
+  // Проверяет, есть ли расписание для текущего фильтра
+  bool _hasScheduleForFilter(Map<String, Map<String, List<ScheduleItem>>> daySchedule) {
+    if (_searchQuery.isEmpty) return true;
+    
+    final query = _searchQuery.toLowerCase();
+    for (var groupSchedule in daySchedule.values) {
+      for (var lessons in groupSchedule.values) {
+        for (var lesson in lessons) {
+          if (lesson.group.toLowerCase().contains(query) ||
+              lesson.teacher.toLowerCase().contains(query) ||
+              lesson.classroom.toLowerCase().contains(query) ||
+              lesson.subject.toLowerCase().contains(query)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  // Подготавливаем данные для всех дат
+  void _prepareData(ScheduleProvider provider) {
+    if (provider.scheduleData == null) return;
+    
+    _preparedData.clear();
+    for (var date in provider.scheduleData!.keys) {
+      final daySchedule = provider.scheduleData![date]!;
+      final allLessons = <ScheduleItem>[];
+      
+      for (var groupLessons in daySchedule.values) {
+        allLessons.addAll(groupLessons.toList());
+      }
+      
+      // Сортируем по номеру пары
+      allLessons.sort((a, b) => a.lessonNumber.compareTo(b.lessonNumber));
+      _preparedData[date] = allLessons;
+    }
+  }
+
+  // Получаем отфильтрованные данные с использованием кэша
+  List<ScheduleItem> _getFilteredLessons(String date, String query) {
+    final cacheKey = '${date}_$query';
+    
+    if (_filteredCache.containsKey(cacheKey)) {
+      return _filteredCache[cacheKey]!;
+    }
+    
+    final allLessons = _preparedData[date] ?? [];
+    
+    if (query.isEmpty) {
+      _filteredCache[cacheKey] = allLessons;
+      return allLessons;
+    }
+    
+    final filteredLessons = allLessons.where((lesson) {
+      final lowercaseQuery = query.toLowerCase();
+      return lesson.group.toLowerCase().contains(lowercaseQuery) ||
+             lesson.teacher.toLowerCase().contains(lowercaseQuery) ||
+             lesson.classroom.toLowerCase().contains(lowercaseQuery) ||
+             lesson.subject.toLowerCase().contains(lowercaseQuery);
+    }).toList();
+    
+    _filteredCache[cacheKey] = filteredLessons;
+    return filteredLessons;
+  }
+
+  // Очищаем кэш при изменении поиска
+  void _clearCache() {
+    _filteredCache.clear();
+  }
+
   @override
   Widget build(BuildContext context) {
     // Определяем текущую тему
@@ -283,6 +539,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       ),
       body: Consumer<ScheduleProvider>(
         builder: (context, provider, child) {
+          // Подготавливаем данные при первой загрузке или обновлении
+          if (provider.scheduleData != null && _preparedData.isEmpty) {
+            _prepareData(provider);
+          }
+
           // Показываем предупреждение об офлайн режиме через сервис
           if (provider.isOffline) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -290,12 +551,31 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             });
           }
 
-          // Показываем ошибки
+          // Показываем ошибки с разными иконками в зависимости от типа
           if (provider.errorMessage != null) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              CustomSnackBar.showError(
-                context,
-                provider.errorMessage!,
+              final message = provider.errorMessage!;
+              final isWarning = message.contains("Новых дней") || 
+                              message.contains("Слишком частые запросы");
+              
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Row(
+                    children: [
+                      Icon(
+                        isWarning ? Icons.warning_amber : Icons.error_outline,
+                        color: Colors.white,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(message),
+                      ),
+                    ],
+                  ),
+                  backgroundColor: isWarning ? Colors.orange : Colors.red,
+                  duration: const Duration(seconds: 3),
+                  behavior: SnackBarBehavior.floating,
+                ),
               );
               provider.dismissError();
             });
@@ -371,64 +651,67 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                             itemCount: provider.scheduleData!.length,
                             itemBuilder: (context, index) {
                               final date = provider.scheduleData!.keys.toList()[index];
-                              final daySchedule = provider.scheduleData![date]!;
-                              final allLessons = <ScheduleItem>[];
-                              
-                              // Собираем все пары за день
-                              for (var groupLessons in daySchedule.values) {
-                                allLessons.addAll(groupLessons.toList());
-                              }
-
-                              // Фильтруем по поиску
-                              final filteredLessons = _searchQuery.isEmpty
-                                  ? allLessons
-                                  : allLessons.where((lesson) {
-                                      final query = _searchQuery.toLowerCase();
-                                      return lesson.group.toLowerCase().contains(query) ||
-                                             lesson.teacher.toLowerCase().contains(query) ||
-                                             lesson.classroom.toLowerCase().contains(query) ||
-                                             lesson.subject.toLowerCase().contains(query);
-                                    }).toList();
-
-                              // Сортируем по номеру пары
-                              filteredLessons.sort((a, b) => a.lessonNumber.compareTo(b.lessonNumber));
+                              final filteredLessons = _getFilteredLessons(date, _searchQuery);
 
                               return Stack(
                                 children: [
-                                  AnimatedSwitcher(
-                                    duration: const Duration(milliseconds: 300),
-                                    transitionBuilder: (Widget child, Animation<double> animation) {
-                                      return FadeTransition(
-                                        opacity: animation,
-                                        child: SlideTransition(
-                                          position: Tween<Offset>(
-                                            begin: Offset(_currentPage > index ? -1.0 : 1.0, 0.0),
-                                            end: Offset.zero,
-                                          ).animate(CurvedAnimation(
-                                            parent: animation,
-                                            curve: Curves.easeInOut,
-                                          )),
-                                          child: child,
-                                        ),
-                                      );
-                                    },
-                                    child: ListView.builder(
-                                      key: PageStorageKey('schedule_list_$date'),
-                                      itemCount: filteredLessons.length,
-                                      padding: _listPadding,
-                                      cacheExtent: 500,
-                                      itemBuilder: (context, index) {
-                                        if (!mounted) return const SizedBox();
-                                        
-                                        return ScheduleItemCard(
-                                          key: ValueKey('${filteredLessons[index].hashCode}_$index'),
-                                          item: filteredLessons[index],
-                                          index: index,
-                                          date: _parseDate(date),
+                                  if (filteredLessons.isEmpty)
+                                    Center(
+                                      child: Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.event_busy,
+                                            size: 64,
+                                            color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+                                          ),
+                                          const SizedBox(height: 16),
+                                          Text(
+                                            _searchQuery.isEmpty 
+                                                ? 'Нет расписания на этот день'
+                                                : 'Нет расписания по вашему запросу',
+                                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    )
+                                  else
+                                    AnimatedSwitcher(
+                                      duration: const Duration(milliseconds: 300),
+                                      transitionBuilder: (Widget child, Animation<double> animation) {
+                                        return FadeTransition(
+                                          opacity: animation,
+                                          child: SlideTransition(
+                                            position: Tween<Offset>(
+                                              begin: Offset(_currentPage > index ? -1.0 : 1.0, 0.0),
+                                              end: Offset.zero,
+                                            ).animate(CurvedAnimation(
+                                              parent: animation,
+                                              curve: Curves.easeInOut,
+                                            )),
+                                            child: child,
+                                          ),
                                         );
                                       },
+                                      child: ListView.builder(
+                                        key: PageStorageKey('schedule_list_$date'),
+                                        itemCount: filteredLessons.length,
+                                        padding: _listPadding,
+                                        cacheExtent: 1000, // Увеличиваем кэш для более плавной прокрутки
+                                        itemBuilder: (context, index) {
+                                          if (!mounted) return const SizedBox();
+                                          
+                                          return ScheduleItemCard(
+                                            key: ValueKey('${filteredLessons[index].hashCode}_$index'),
+                                            item: filteredLessons[index],
+                                            index: index,
+                                            date: _parseDate(date),
+                                          );
+                                        },
+                                      ),
                                     ),
-                                  ),
                                 ],
                               );
                             },
@@ -572,6 +855,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   void dispose() {
     _searchController.dispose();
     _pageController.dispose();
+    _filteredCache.clear();
+    _preparedData.clear();
     _hasShownOfflineWarning = false;
     super.dispose();
   }
