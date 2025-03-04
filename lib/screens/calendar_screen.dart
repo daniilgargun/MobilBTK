@@ -40,6 +40,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     super.initState();
     _selectedDay = _focusedDay;
     _loadSavedFormat();
+    _loadSettings();
     _prepareCalendarData();
   }
 
@@ -87,12 +88,18 @@ class _CalendarScreenState extends State<CalendarScreen> {
     if (!mounted) return;
     
     final prefs = await SharedPreferences.getInstance();
-    await Future.wait([
-      prefs.setString(_filterKey, _selectedFilter),
-      if (_selectedGroup != null) prefs.setString(_groupKey, _selectedGroup!),
-      if (_selectedTeacher != null) prefs.setString(_teacherKey, _selectedTeacher!),
-      prefs.setString(_calendarFormatKey, _calendarFormat.toString()),
-    ]);
+    await prefs.setString(_filterKey, _selectedFilter);
+    if (_selectedGroup != null) {
+      await prefs.setString(_groupKey, _selectedGroup!);
+    } else {
+      await prefs.remove(_groupKey);
+    }
+    if (_selectedTeacher != null) {
+      await prefs.setString(_teacherKey, _selectedTeacher!);
+    } else {
+      await prefs.remove(_teacherKey);
+    }
+    await prefs.setString(_calendarFormatKey, _calendarFormat.toString());
   }
 
   // Получаем расписание для выбранного дня
