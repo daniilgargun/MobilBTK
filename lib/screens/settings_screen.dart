@@ -158,7 +158,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Загрузка настроек...'),
+            ],
+          ),
+        ),
+      );
     }
 
     return Scaffold(
@@ -176,92 +187,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onChanged: (value) async {
               await toggleTheme();
             },
+            secondary: Icon(
+              _isDarkMode ?? false ? Icons.dark_mode : Icons.light_mode,
+              color: Theme.of(context).colorScheme.primary,
+            ),
           ),
           const Divider(),
 
           // Секция расписания
-          _buildSectionHeader('Расписание'),
-          ListTile(
-            title: const Text('Хранение расписания'),
-            subtitle: Text('$_storageDays дней'),
-            trailing: PopupMenuButton<int>(
-              icon: const Icon(Icons.arrow_drop_down_circle_outlined),
-              onSelected: _updateStorageDays,
-              itemBuilder: (context) => [
-                const PopupMenuItem(
-                  value: 7,
-                  child: Text('7 дней'),
-                ),
-                const PopupMenuItem(
-                  value: 15,
-                  child: Text('15 дней'),
-                ),
-                const PopupMenuItem(
-                  value: 30,
-                  child: Text('30 дней'),
-                ),
-                const PopupMenuItem(
-                  value: 60,
-                  child: Text('60 дней'),
-                ),
-                const PopupMenuItem(
-                  value: 90,
-                  child: Text('90 дней'),
-                ),
-              ],
-            ),
-          ),
-          ListTile(
-            title: const Text('Последнее обновление'),
-            subtitle: Text(_lastUpdateInfo),
-            trailing: IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: () async {
-                setState(() {
-                  _isLoading = true;
-                });
-                await context.read<ScheduleProvider>().updateSchedule();
-                await _loadLastUpdateInfo();
-                setState(() {
-                  _isLoading = false;
-                });
-              },
-            ),
-          ),
-          const Divider(),
+          _buildScheduleSection(),
 
           // Секция управления данными
           _buildSectionHeader('Управление данными'),
           ListTile(
-            title: const Text('Данные приложения'),
-            subtitle: Text(_cacheInfo['Общий размер'] ?? '0 КБ'),
-            trailing: IconButton(
-              icon: Icon(_showCacheDetails 
-                ? Icons.keyboard_arrow_up 
-                : Icons.keyboard_arrow_down),
-              onPressed: () {
-                setState(() {
-                  _showCacheDetails = !_showCacheDetails;
-                });
-              },
+            title: const Text('Сбросить настройки'),
+            subtitle: const Text('Вернуть настройки по умолчанию'),
+            leading: Icon(
+              Icons.settings_backup_restore,
+              color: Theme.of(context).colorScheme.primary,
             ),
-          ),
-          if (_showCacheDetails)
-            ..._cacheInfo.entries
-                .where((entry) => entry.key != 'Общий размер')
-                .map((entry) => Padding(
-                  padding: const EdgeInsets.only(left: 16.0),
-                  child: ListTile(
-                    title: Text(entry.key),
-                    trailing: Text(entry.value),
-                  ),
-                )),
-          ListTile(
-            title: const Text('Очистить кэш'),
-            subtitle: const Text('Выберите, что нужно очистить'),
-            trailing: const Icon(Icons.delete_forever),
             onTap: () {
-              _showClearCacheDialog();
+              _showResetSettingsDialog();
+            },
+          ),
+          ListTile(
+            title: const Text('Очистить данные расписания'),
+            subtitle: const Text('Удалить сохраненное расписание'),
+            leading: Icon(
+              Icons.delete_outline,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            onTap: () {
+              _showClearScheduleDialog();
             },
           ),
           const Divider(),
@@ -271,6 +228,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ListTile(
             title: const Text('Разработчик'),
             subtitle: const Text('Gargun Daniil'),
+            leading: Icon(
+              Icons.person_outline,
+              color: Theme.of(context).colorScheme.primary,
+            ),
             onTap: () {
               _showDeveloperInfo();
             },
@@ -278,6 +239,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ListTile(
             title: const Text('Сайт колледжа'),
             subtitle: const Text('bartc.by'),
+            leading: Icon(
+              Icons.public,
+              color: Theme.of(context).colorScheme.primary,
+            ),
             onTap: () {
               _launchUrl('https://bartc.by');
             },
@@ -285,11 +250,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ListTile(
             title: const Text('Telegram-бот'),
             subtitle: const Text('@BTKraspbot'),
+            leading: Icon(
+              Icons.telegram,
+              color: Theme.of(context).colorScheme.primary,
+            ),
             onTap: () => _launchUrl('https://t.me/BTKraspbot'),
           ),
           ListTile(
             title: const Text('Версия'),
             subtitle: Text(_appVersion),
+            leading: Icon(
+              Icons.info_outline,
+              color: Theme.of(context).colorScheme.primary,
+            ),
           ),
         ],
       ),
@@ -334,8 +307,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _storageDays = days;
+      _isLoading = true;
     });
+    
     await prefs.setInt('schedule_storage_days', days);
+    
+    // Обновляем настройки в провайдере и очищаем старые данные
+    final provider = context.read<ScheduleProvider>();
+    await provider.updateStorageDays(days);
+    
+    // Пересчитываем размер кэша
+    await _calculateCacheSize();
+    
+    setState(() {
+      _isLoading = false;
+    });
+    
+    // Показываем уведомление об успешном обновлении
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Настройки хранения обновлены: $_storageDays дней'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   // Открывает ссылки (сайт колледжа и телеграм)
@@ -423,78 +419,182 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // Диалог очистки кэша
-  // Можно выбрать что удалить
-  Future<void> _showClearCacheDialog() async {
-    final result = await showDialog<Map<String, bool>>(
+  // Диалог сброса настроек
+  Future<void> _showResetSettingsDialog() async {
+    final result = await showDialog<bool>(
       context: context,
-      builder: (context) {
-        final checkboxValues = {
-          'База данных': true,
-          'Настройки': false,
-        };
-        
-        return StatefulBuilder(
-          builder: (context, setState) => AlertDialog(
-            title: const Text('Очистить кэш?'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Выберите, что нужно очистить:'),
-                const SizedBox(height: 16),
-                ...checkboxValues.entries.map((entry) => CheckboxListTile(
-                  title: Text(entry.key),
-                  subtitle: Text(_cacheInfo[entry.key] ?? '0 КБ'),
-                  value: entry.value,
-                  onChanged: (value) {
-                    setState(() {
-                      checkboxValues[entry.key] = value ?? false;
-                    });
-                  },
-                )),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Отмена'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, checkboxValues),
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.red,
-                ),
-                child: const Text('Очистить'),
-              ),
-            ],
+      builder: (context) => AlertDialog(
+        title: const Text('Сбросить настройки?'),
+        content: const Text('Все настройки будут возвращены к значениям по умолчанию. Данные расписания не будут удалены.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
           ),
-        );
-      },
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.red,
+            ),
+            child: const Text('Сбросить'),
+          ),
+        ],
+      ),
     );
 
-    if (result != null) {
-      // Очистка выбранных данных
-      final db = context.read<DatabaseService>();
+    if (result == true) {
+      final prefs = await SharedPreferences.getInstance();
       
-      if (result['База данных'] == true) {
-        await db.recreateDatabase();
+      // Сохраняем только данные о последнем обновлении
+      final lastUpdateStr = prefs.getString('last_schedule_update');
+      
+      // Очищаем все настройки
+      await prefs.clear();
+      
+      // Восстанавливаем данные о последнем обновлении
+      if (lastUpdateStr != null) {
+        await prefs.setString('last_schedule_update', lastUpdateStr);
       }
       
-      if (result['Настройки'] == true) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.clear();
-      }
+      // Устанавливаем настройки по умолчанию
+      await prefs.setBool('is_dark_mode', false);
+      await prefs.setInt('schedule_storage_days', 30);
       
-      // Перезагрузка настроек и пересчет размера кэша
+      // Обновляем настройки в провайдере
+      final provider = context.read<ScheduleProvider>();
+      await provider.updateStorageDays(30);
+      
+      // Перезагружаем настройки
       await _loadSettings();
-      await _calculateCacheSize();
+      
+      // Обновляем тему в родительском виджете
+      if (context.mounted) {
+        final appState = context.findAncestorStateOfType<MyAppState>();
+        if (appState != null) {
+          appState.updateTheme(false);
+        }
+      }
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Кэш очищен')),
+          const SnackBar(content: Text('Настройки сброшены')),
         );
       }
     }
+  }
+
+  // Диалог очистки расписания
+  Future<void> _showClearScheduleDialog() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Очистить расписание?'),
+        content: const Text('Все сохраненные данные расписания будут удалены. Вам потребуется подключение к интернету для загрузки нового расписания.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.red,
+            ),
+            child: const Text('Очистить'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == true) {
+      setState(() {
+        _isLoading = true;
+      });
+      
+      // Очищаем базу данных
+      final db = context.read<DatabaseService>();
+      await db.recreateDatabase();
+      
+      // Сбрасываем данные в провайдере
+      final provider = context.read<ScheduleProvider>();
+      provider.clearCache();
+      
+      setState(() {
+        _isLoading = false;
+      });
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Данные расписания очищены')),
+        );
+      }
+    }
+  }
+
+  // Секция расписания
+  Widget _buildScheduleSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionHeader('Расписание'),
+        ListTile(
+          title: const Text('Период отображения'),
+          subtitle: Text('$_storageDays дней'),
+          leading: Icon(
+            Icons.date_range,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          trailing: PopupMenuButton<int>(
+            icon: const Icon(Icons.tune),
+            tooltip: 'Изменить период отображения',
+            onSelected: _updateStorageDays,
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 7,
+                child: Text('7 дней'),
+              ),
+              const PopupMenuItem(
+                value: 14,
+                child: Text('14 дней'),
+              ),
+              const PopupMenuItem(
+                value: 30,
+                child: Text('30 дней (рекомендуется)'),
+              ),
+              const PopupMenuItem(
+                value: 60,
+                child: Text('60 дней'),
+              ),
+              const PopupMenuItem(
+                value: 90,
+                child: Text('90 дней'),
+              ),
+            ],
+          ),
+        ),
+        ListTile(
+          title: const Text('Последнее обновление'),
+          subtitle: Text(_lastUpdateInfo),
+          leading: Icon(
+            Icons.update,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          trailing: IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () async {
+              setState(() {
+                _isLoading = true;
+              });
+              await context.read<ScheduleProvider>().updateSchedule();
+              await _loadLastUpdateInfo();
+              setState(() {
+                _isLoading = false;
+              });
+            },
+          ),
+        ),
+        const Divider(),
+      ],
+    );
   }
 } 

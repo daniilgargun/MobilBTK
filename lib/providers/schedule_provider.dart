@@ -38,6 +38,9 @@ class ScheduleProvider extends ChangeNotifier {
   Map<String, List<ScheduleItem>> _filteredCache = {};
   bool _isDataPrepared = false;
 
+  // Добавляем переменную для хранения настроек отображения
+  int _displayDays = 30;
+
   Map<String, Map<String, List<ScheduleItem>>>? get scheduleData => _currentScheduleData;
   Map<String, Map<String, List<ScheduleItem>>>? get fullScheduleData => _fullScheduleData;
   List<String> get groups => _groups;
@@ -59,6 +62,19 @@ class ScheduleProvider extends ChangeNotifier {
       const Duration(seconds: 5),
       (_) => _checkConnectivity(),
     );
+    
+    // Инициализируем настройки отображения
+    _initDisplayDays();
+  }
+
+  // Инициализирует настройки отображения
+  Future<void> _initDisplayDays() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _displayDays = prefs.getInt('schedule_storage_days') ?? 30;
+    } catch (e) {
+      debugPrint('Ошибка при инициализации настроек отображения: $e');
+    }
   }
 
   void _updateStatus(String? message) {
@@ -92,6 +108,11 @@ class ScheduleProvider extends ChangeNotifier {
     try {
       _updateStatus('Загрузка расписания...');
       debugPrint('📥 Начало загрузки расписания');
+      
+      // Загружаем настройки отображения
+      final prefs = await SharedPreferences.getInstance();
+      _displayDays = prefs.getInt('schedule_storage_days') ?? 30;
+      _storageDays = _displayDays > 30 ? _displayDays : 30;
       
       // Загружаем оба типа расписания
       final currentSchedule = await _db.getCurrentSchedule();
@@ -140,6 +161,12 @@ class ScheduleProvider extends ChangeNotifier {
   }
 
   Future<void> updateSchedule({bool silent = false}) async {
+    // Проверяем подключение к интернету перед обновлением
+    if (!await ConnectivityService().isOnline()) {
+      _handleError('Нет подключения к интернету');
+      return;
+    }
+
     // Предотвращаем параллельные обновления
     if (_isUpdating) {
       debugPrint('⏭️ Обновление уже выполняется, пропускаем');
@@ -151,25 +178,17 @@ class ScheduleProvider extends ChangeNotifier {
     if (!silent) {
       _isLoading = true;
       _updateStatus('Обновление расписания...');
+      notifyListeners();
     }
     
     try {
-      
       final result = await compute(_parseScheduleIsolate, _parser.url);
       
       if (result.$1 != null) {
-        
         _currentScheduleData = result.$1;
-        
-        
         await _db.saveCurrentSchedule(_currentScheduleData!);
-        
-        
         await _db.archiveSchedule(_currentScheduleData!);
-        
-        
         _fullScheduleData = await _db.getArchiveSchedule();
-        
         
         _groups = result.$2;
         _teachers = result.$3;
@@ -188,6 +207,9 @@ class ScheduleProvider extends ChangeNotifier {
           _showSuccess = true;
           _successMessage = 'Расписание успешно обновлено';
         }
+
+        // Очищаем кэш после успешного обновления
+        clearCache();
       } else if (result.$4 != null) {
         _handleError('Ошибка обновления', details: result.$4);
       }
@@ -206,18 +228,30 @@ class ScheduleProvider extends ChangeNotifier {
   }
 
   Future<void> updateStorageDays(int days) async {
-    _storageDays = days;
+    // Минимальный период хранения - 30 дней или выбранное пользователем значение (что больше)
+    _storageDays = days > 30 ? days : 30;
+    // Сохраняем выбранное пользователем значение для отображения
+    _displayDays = days;
+    
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('schedule_storage_days', days);
     await _cleanOldSchedule();
+    
+    // Очищаем кэш, чтобы обновить данные в календаре
+    clearCache();
+    
+    notifyListeners();
   }
 
   Future<void> _cleanOldSchedule() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      _storageDays = prefs.getInt('schedule_storage_days') ?? 30;
+      final userSelectedDays = prefs.getInt('schedule_storage_days') ?? 30;
       
-      // Очищаем старые данные из архива
+      // Фактический период хранения - 30 дней или выбранное пользователем значение (что больше)
+      _storageDays = userSelectedDays > 30 ? userSelectedDays : 30;
+      
+      // Очищаем старые данные из базы данных
       await _db.cleanOldArchive(_storageDays);
       
       // Обновляем локальное состояние
@@ -225,20 +259,19 @@ class ScheduleProvider extends ChangeNotifier {
         final now = DateTime.now();
         final cutoffDate = now.subtract(Duration(days: _storageDays));
         
+        // Удаляем старые данные из архива
         _fullScheduleData!.removeWhere((dateStr, _) {
           try {
             final date = _parseDateString(dateStr);
             return date.isBefore(cutoffDate);
           } catch (e) {
+            debugPrint('Ошибка при парсинге даты: $e');
             return false;
           }
         });
+        
+        notifyListeners();
       }
-      
-      // Перезагружаем архивное расписание после очистки
-      _fullScheduleData = await _db.getArchiveSchedule();
-      
-      notifyListeners();
     } catch (e) {
       debugPrint('Ошибка при очистке старого расписания: $e');
     }
@@ -373,39 +406,7 @@ class ScheduleProvider extends ChangeNotifier {
   }
 
   Future<bool> shouldUpdateSchedule() async {
-    try {
-      final now = DateTime.now();
-      
-      if (now.weekday == DateTime.sunday) {
-        return false;
-      }
-      
-      if (now.hour < 7 || now.hour >= 20) {
-        return false;
-      }
-      
-      final lastUpdate = await getLastUpdateTime();
-      
-      if (lastUpdate == null) {
-        return true;
-      }
-      
-      if (lastUpdate.day != now.day || 
-          lastUpdate.month != now.month || 
-          lastUpdate.year != now.year) {
-        return true;
-      }
-      
-      final hoursSinceLastUpdate = now.difference(lastUpdate).inHours;
-      if (hoursSinceLastUpdate >= 3) {
-        return true;
-      }
-      
-      return false;
-    } catch (e) {
-      debugPrint('Ошибка при проверке необходимости обновления: $e');
-      return false;
-    }
+    return true; // Теперь обновление доступно всегда
   }
 
   Future<DateTime?> getLastUpdateTime() async {
@@ -436,8 +437,35 @@ class ScheduleProvider extends ChangeNotifier {
     }
   }
 
+  // Получает расписание для календаря с учетом настроек отображения
   Map<String, Map<String, List<ScheduleItem>>>? getScheduleForCalendar() {
-    return _fullScheduleData;
+    if (_fullScheduleData == null) return null;
+    
+    // Используем значение, выбранное пользователем для отображения
+    final displayDays = _displayDays;
+    
+    // Фильтруем по дате для отображения
+    final now = DateTime.now();
+    final cutoffDate = now.subtract(Duration(days: displayDays));
+    
+    final filteredData = <String, Map<String, List<ScheduleItem>>>{};
+    
+    for (var entry in _fullScheduleData!.entries) {
+      try {
+        final dateStr = entry.key;
+        final date = _parseDateString(dateStr);
+        
+        // Проверяем, находится ли дата в пределах указанного периода
+        // Включаем только даты, которые не старше cutoffDate и не позже now + 1 день
+        if (!date.isBefore(cutoffDate) && !date.isAfter(now.add(const Duration(days: 1)))) {
+          filteredData[dateStr] = entry.value;
+        }
+      } catch (e) {
+        debugPrint('Ошибка при фильтрации дат для календаря: $e');
+      }
+    }
+    
+    return filteredData;
   }
 
   // Подготавливаем данные заранее
@@ -497,5 +525,6 @@ class ScheduleProvider extends ChangeNotifier {
     _filteredCache.clear();
     _preparedScheduleCache.clear();
     _isDataPrepared = false;
+    notifyListeners();
   }
 }

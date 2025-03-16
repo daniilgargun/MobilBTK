@@ -254,7 +254,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             _buildSearchInfoItem(
               Icons.group,
               'Группа',
-              'Например: "ПО-41", "по41"',
+              'Например: "383", "194"',
             ),
             const SizedBox(height: 12),
             _buildSearchInfoItem(
@@ -272,7 +272,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             _buildSearchInfoItem(
               Icons.room,
               'Кабинет',
-              'Номер: "401", "402"',
+              'Номер: "401", "О37"',
             ),
           ],
         ),

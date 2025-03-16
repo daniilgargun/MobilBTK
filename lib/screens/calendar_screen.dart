@@ -55,18 +55,74 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   void _prepareCalendarData() {
     final provider = Provider.of<ScheduleProvider>(context, listen: false);
-    if (provider.scheduleData == null) return;
+    
+    // Получаем данные с учетом настроек отображения
+    final scheduleData = provider.getScheduleForCalendar();
+    if (scheduleData == null) return;
 
     _calendarEventsCache.clear();
-    for (var date in provider.scheduleData!.keys) {
-      final dateTime = _parseDate(date);
-      final lessons = provider.getPreparedSchedule(date);
-      _calendarEventsCache[dateTime] = lessons;
+    
+    // Заполняем кэш событий для календаря
+    for (var date in scheduleData.keys) {
+      try {
+        final dateTime = _parseDate(date);
+        final daySchedule = scheduleData[date]!;
+        
+        // Собираем все уроки для этого дня
+        final allLessons = <ScheduleItem>[];
+        for (var groupLessons in daySchedule.values) {
+          allLessons.addAll(groupLessons);
+        }
+        
+        // Сортируем по номеру пары
+        allLessons.sort((a, b) => a.lessonNumber.compareTo(b.lessonNumber));
+        
+        // Сохраняем в кэш
+        _calendarEventsCache[dateTime] = allLessons;
+      } catch (e) {
+        debugPrint('Ошибка при подготовке данных календаря: $e');
+      }
+    }
+    
+    // Обновляем UI
+    if (mounted) {
+      setState(() {});
     }
   }
 
   List<ScheduleItem> _getEventsForDay(DateTime date) {
-    return _calendarEventsCache[date] ?? [];
+    // Проверяем, есть ли дата в кэше
+    if (_calendarEventsCache.containsKey(date)) {
+      return _calendarEventsCache[date]!;
+    }
+    
+    // Если нет в кэше, пробуем найти по строковому представлению даты
+    final day = date.day.toString().padLeft(2, '0');
+    final monthStr = _getMonthStr(date.month);
+    final dateStr = '$day-$monthStr';
+    
+    final provider = Provider.of<ScheduleProvider>(context, listen: false);
+    final scheduleData = provider.getScheduleForCalendar();
+    
+    if (scheduleData == null || !scheduleData.containsKey(dateStr)) {
+      return [];
+    }
+    
+    // Собираем все уроки для этого дня
+    final daySchedule = scheduleData[dateStr]!;
+    final allLessons = <ScheduleItem>[];
+    
+    for (var groupLessons in daySchedule.values) {
+      allLessons.addAll(groupLessons);
+    }
+    
+    // Сортируем по номеру пары
+    allLessons.sort((a, b) => a.lessonNumber.compareTo(b.lessonNumber));
+    
+    // Сохраняем в кэш
+    _calendarEventsCache[date] = allLessons;
+    
+    return allLessons;
   }
 
   Future<void> _loadSettings() async {
@@ -102,47 +158,52 @@ class _CalendarScreenState extends State<CalendarScreen> {
     await prefs.setString(_calendarFormatKey, _calendarFormat.toString());
   }
 
-  // Получаем расписание для выбранного дня
-  List<ScheduleItem> _getScheduleForDay(DateTime date, ScheduleProvider provider) {
-    final day = date.day.toString().padLeft(2, '0');
-    final monthStr = _getMonthStr(date.month);
-    final dateStr = '$day-$monthStr';
+  // Получаем расписание для выбранного дня с учетом фильтров
+  List<ScheduleItem> _getScheduleForDay(DateTime day) {
+    final lessons = _getEventsForDay(day);
     
-    final scheduleData = provider.fullScheduleData;
-    if (scheduleData == null || !scheduleData.containsKey(dateStr)) {
-      return const [];
+    // Если нет фильтра или нет уроков, возвращаем как есть
+    if (_selectedFilter == 'all' || lessons.isEmpty) {
+      return lessons;
     }
-
-    final daySchedule = scheduleData[dateStr]!;
-    final allLessons = <ScheduleItem>[];
-
-    // Оптимизируем фильтрацию
-    if (_selectedFilter == 'group' && _selectedGroup != null) {
-      if (daySchedule.containsKey(_selectedGroup)) {
-        allLessons.addAll(daySchedule[_selectedGroup]!);
+    
+    // Применяем фильтр
+    final filteredLessons = lessons.where((lesson) {
+      if (_selectedFilter == 'group' && _selectedGroup != null) {
+        return lesson.group == _selectedGroup;
+      } else if (_selectedFilter == 'teacher' && _selectedTeacher != null) {
+        return lesson.teacher == _selectedTeacher;
       }
-    } else if (_selectedFilter == 'teacher' && _selectedTeacher != null) {
-      for (var groupLessons in daySchedule.values) {
-        allLessons.addAll(groupLessons.where((l) => l.teacher == _selectedTeacher));
-      }
-    } else {
-      for (var groupLessons in daySchedule.values) {
-        allLessons.addAll(groupLessons);
-      }
+      return true;
+    }).toList();
+    
+    // Если после фильтрации ничего не осталось, показываем уведомление
+    if (filteredLessons.isEmpty && lessons.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _selectedFilter == 'group'
+                    ? 'Нет расписания для группы $_selectedGroup на этот день'
+                    : 'Нет расписания для преподавателя $_selectedTeacher на этот день'
+              ),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      });
     }
-
-    // Сортируем по номеру пары
-    allLessons.sort((a, b) => a.lessonNumber.compareTo(b.lessonNumber));
-    return allLessons;
+    
+    return filteredLessons;
   }
 
-  // Переводит номер месяца в текст
-  // например 3 -> "март"
+  // Преобразует номер месяца в строку для формата даты
   String _getMonthStr(int month) {
-    const months = {
+    const monthMap = {
       1: 'янв',
       2: 'фев',
-      3: 'март', // Используем полное название для марта
+      3: 'март',
       4: 'апр',
       5: 'май',
       6: 'июн',
@@ -151,9 +212,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
       9: 'сен',
       10: 'окт',
       11: 'ноя',
-      12: 'дек'
+      12: 'дек',
     };
-    return months[month] ?? '';
+    return monthMap[month] ?? '';
   }
 
   // Обновленный диалог выбора фильтра с красивым дизайном
@@ -329,7 +390,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   // Показывает цветные точки для дней с парами
   Widget _buildEventMarkers(DateTime date, ScheduleProvider scheduleProvider, NotesProvider notesProvider) {
-    final hasSchedule = _getScheduleForDay(date, scheduleProvider).isNotEmpty;
+    final hasSchedule = _getScheduleForDay(date).isNotEmpty;
     final hasNote = notesProvider.hasNoteForDate(date);
     
     if (!hasSchedule && !hasNote) return const SizedBox.shrink();
@@ -369,7 +430,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
   // Синий - практика
   // Зеленый - лекция
   Color _getScheduleMarkerColor(DateTime date, ScheduleProvider provider) {
-    final schedule = _getScheduleForDay(date, provider);
+    final schedule = _getScheduleForDay(date);
     if (schedule.isEmpty) return Colors.transparent;
 
     // Проверяем типы пар в расписании
@@ -466,6 +527,23 @@ class _CalendarScreenState extends State<CalendarScreen> {
   Widget build(BuildContext context) {
     return Consumer<ScheduleProvider>(
       builder: (context, provider, child) {
+        // Обновляем кэш при изменении данных или настроек
+        if (provider.scheduleData != null && !_isInitialized) {
+          _isInitialized = true;
+          // Используем addPostFrameCallback, чтобы избежать ошибок setState во время build
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              _prepareCalendarData();
+            }
+          });
+        }
+        
+        // Получаем заметку для выбранного дня
+        final notesProvider = Provider.of<NotesProvider>(context);
+        final selectedDayNote = _selectedDay != null 
+            ? notesProvider.getNote(_selectedDay!) 
+            : null;
+        
         final hasAnySchedule = provider.fullScheduleData?.isNotEmpty ?? false;
         
         // Проверяем, есть ли расписание для текущего фильтра
@@ -504,15 +582,25 @@ class _CalendarScreenState extends State<CalendarScreen> {
           });
         }
 
-        // Обновляем кэш при изменении данных
-        if (provider.scheduleData != null) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _prepareCalendarData();
-          });
+        // Используем отфильтрованное расписание для календаря
+        final scheduleData = provider.getScheduleForCalendar();
+        
+        // Если нет данных, показываем пустой календарь
+        if (scheduleData == null || scheduleData.isEmpty) {
+          return const Center(
+            child: Text('Нет данных о расписании'),
+          );
         }
-
-        // Используем полное расписание для календаря
-        final scheduleData = provider.fullScheduleData;
+        
+        // Получаем список групп и преподавателей для фильтров
+        final groups = provider.groups;
+        final teachers = provider.teachers;
+        
+        // Получаем расписание для выбранного дня
+        final selectedDaySchedule = _selectedDay != null 
+            ? _getScheduleForDay(_selectedDay!) 
+            : <ScheduleItem>[];
+        
         return Scaffold(
           appBar: AppBar(
             title: Row(
@@ -561,6 +649,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
                         _saveCalendarFormat(format);
                       });
                     },
+                    onPageChanged: (focusedDay) {
+                      // Обновляем фокусный день при смене страницы
+                      setState(() {
+                        _focusedDay = focusedDay;
+                        // Обновляем данные календаря при смене месяца
+                        _prepareCalendarData();
+                      });
+                    },
                     locale: 'ru_RU',
                     startingDayOfWeek: StartingDayOfWeek.monday,
                     headerStyle: HeaderStyle(
@@ -575,6 +671,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                         color: Theme.of(context).colorScheme.onSurface,
                       ),
                       formatButtonPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      leftChevronIcon: const Icon(Icons.chevron_left),
+                      rightChevronIcon: const Icon(Icons.chevron_right),
                     ),
                     calendarStyle: CalendarStyle(
                       outsideDaysVisible: true,
@@ -641,7 +739,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 Expanded(
                   child: Consumer2<ScheduleProvider, NotesProvider>(
                     builder: (context, provider, notesProvider, child) {
-                      final schedule = _getScheduleForDay(_selectedDay!, provider);
+                      final schedule = _getScheduleForDay(_selectedDay!);
                       final note = notesProvider.getNote(_selectedDay!);
                       
                       if (_noteController.text != note?.text) {
@@ -758,6 +856,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     }
   }
 
+  // Преобразует строку с датой в DateTime
   DateTime _parseDate(String dateStr) {
     final parts = dateStr.split('-');
     if (parts.length != 2) return DateTime.now();
