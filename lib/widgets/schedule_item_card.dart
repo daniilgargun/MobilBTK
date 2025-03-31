@@ -25,7 +25,7 @@ class ScheduleItemCard extends StatelessWidget {
     final accentColor = _getAccentColor(context, item);
     final showSubgroup = item.subgroup != null && item.subgroup != "0";
     final dayType = LessonTime.getDayType(date.weekday);
-    final times = LessonTime.getTimesForLesson(item.lessonNumber, dayType);
+    final timeRange = LessonTime.getTimeRangeString(item.lessonNumber, dayType);
     
     return AnimatedOpacity(
       opacity: 1.0,
@@ -62,9 +62,9 @@ class ScheduleItemCard extends StatelessWidget {
                         style: theme.textTheme.titleMedium,
                       ),
                       const SizedBox(width: 8),
-                      if (times.isNotEmpty)
+                      if (timeRange.isNotEmpty)
                         Text(
-                          '(${times[0].start} - ${times[1].end})',
+                          '($timeRange)',
                           style: theme.textTheme.bodyMedium?.copyWith(
                             color: theme.colorScheme.secondary,
                           ),

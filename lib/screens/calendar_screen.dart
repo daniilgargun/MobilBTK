@@ -9,6 +9,7 @@ import 'package:intl/intl.dart';
 import '../widgets/schedule_item_card.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/selection_dialog.dart';
+import '../main.dart';
 
 class CalendarScreen extends StatefulWidget {
   const CalendarScreen({super.key});
@@ -56,17 +57,23 @@ class _CalendarScreenState extends State<CalendarScreen> {
   void _prepareCalendarData() {
     final provider = Provider.of<ScheduleProvider>(context, listen: false);
     
-    // Получаем данные с учетом настроек отображения
-    final scheduleData = provider.getScheduleForCalendar();
-    if (scheduleData == null) return;
-
+    // Получаем полные данные архива, а не только filtered data
+    final fullArchiveData = provider.fullScheduleData;
+    final currentScheduleData = provider.scheduleData;
+    
+    if (fullArchiveData == null && currentScheduleData == null) return;
+    
+    // Очищаем кэш
     _calendarEventsCache.clear();
     
-    // Заполняем кэш событий для календаря
-    for (var date in scheduleData.keys) {
+    // Основной источник данных - полный архив
+    final sourceData = fullArchiveData ?? {};
+    
+    // Заполняем кэш событий для календаря из всего архива
+    for (var date in sourceData.keys) {
       try {
         final dateTime = _parseDate(date);
-        final daySchedule = scheduleData[date]!;
+        final daySchedule = sourceData[date]!;
         
         // Собираем все уроки для этого дня
         final allLessons = <ScheduleItem>[];
@@ -81,6 +88,30 @@ class _CalendarScreenState extends State<CalendarScreen> {
         _calendarEventsCache[dateTime] = allLessons;
       } catch (e) {
         debugPrint('Ошибка при подготовке данных календаря: $e');
+      }
+    }
+    
+    // Дополнительно добавляем текущие данные, если есть
+    if (currentScheduleData != null) {
+      for (var date in currentScheduleData.keys) {
+        try {
+          final dateTime = _parseDate(date);
+          final daySchedule = currentScheduleData[date]!;
+          
+          // Собираем все уроки для этого дня
+          final allLessons = <ScheduleItem>[];
+          for (var groupLessons in daySchedule.values) {
+            allLessons.addAll(groupLessons);
+          }
+          
+          // Сортируем по номеру пары
+          allLessons.sort((a, b) => a.lessonNumber.compareTo(b.lessonNumber));
+          
+          // Сохраняем в кэш
+          _calendarEventsCache[dateTime] = allLessons;
+        } catch (e) {
+          debugPrint('Ошибка при подготовке данных календаря: $e');
+        }
       }
     }
     
@@ -102,27 +133,44 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final dateStr = '$day-$monthStr';
     
     final provider = Provider.of<ScheduleProvider>(context, listen: false);
-    final scheduleData = provider.getScheduleForCalendar();
+    final fullArchiveData = provider.fullScheduleData;
+    final currentScheduleData = provider.scheduleData;
     
-    if (scheduleData == null || !scheduleData.containsKey(dateStr)) {
+    if (fullArchiveData == null && currentScheduleData == null) {
       return [];
     }
     
-    // Собираем все уроки для этого дня
-    final daySchedule = scheduleData[dateStr]!;
-    final allLessons = <ScheduleItem>[];
-    
-    for (var groupLessons in daySchedule.values) {
-      allLessons.addAll(groupLessons);
+    // Проверяем сначала в текущих данных
+    if (currentScheduleData != null && currentScheduleData.containsKey(dateStr)) {
+      final daySchedule = currentScheduleData[dateStr]!;
+      final allLessons = <ScheduleItem>[];
+      
+      for (var groupLessons in daySchedule.values) {
+        allLessons.addAll(groupLessons);
+      }
+      
+      // Сортируем и кэшируем
+      allLessons.sort((a, b) => a.lessonNumber.compareTo(b.lessonNumber));
+      _calendarEventsCache[date] = allLessons;
+      return allLessons;
     }
     
-    // Сортируем по номеру пары
-    allLessons.sort((a, b) => a.lessonNumber.compareTo(b.lessonNumber));
+    // Затем проверяем в архиве
+    if (fullArchiveData != null && fullArchiveData.containsKey(dateStr)) {
+      final daySchedule = fullArchiveData[dateStr]!;
+      final allLessons = <ScheduleItem>[];
+      
+      for (var groupLessons in daySchedule.values) {
+        allLessons.addAll(groupLessons);
+      }
+      
+      // Сортируем и кэшируем
+      allLessons.sort((a, b) => a.lessonNumber.compareTo(b.lessonNumber));
+      _calendarEventsCache[date] = allLessons;
+      return allLessons;
+    }
     
-    // Сохраняем в кэш
-    _calendarEventsCache[date] = allLessons;
-    
-    return allLessons;
+    return [];
   }
 
   Future<void> _loadSettings() async {
@@ -162,9 +210,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
   List<ScheduleItem> _getScheduleForDay(DateTime day) {
     final lessons = _getEventsForDay(day);
     
-    // Если нет фильтра или нет уроков, возвращаем как есть
-    if (_selectedFilter == 'all' || lessons.isEmpty) {
-      return lessons;
+    // Если нет фильтра, возвращаем пустой список - должен быть выбран фильтр
+    if (_selectedFilter == 'all') {
+      return [];
+    }
+    
+    // Если нет уроков, возвращаем пустой список
+    if (lessons.isEmpty) {
+      return [];
     }
     
     // Применяем фильтр
@@ -176,24 +229,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
       }
       return true;
     }).toList();
-    
-    // Если после фильтрации ничего не осталось, показываем уведомление
-    if (filteredLessons.isEmpty && lessons.isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                _selectedFilter == 'group'
-                    ? 'Нет расписания для группы $_selectedGroup на этот день'
-                    : 'Нет расписания для преподавателя $_selectedTeacher на этот день'
-              ),
-              duration: const Duration(seconds: 2),
-            ),
-          );
-        }
-      });
-    }
     
     return filteredLessons;
   }
@@ -390,7 +425,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   // Показывает цветные точки для дней с парами
   Widget _buildEventMarkers(DateTime date, ScheduleProvider scheduleProvider, NotesProvider notesProvider) {
-    final hasSchedule = _getScheduleForDay(date).isNotEmpty;
+    final allEvents = _getEventsForDay(date); // Все события без фильтра
+    final hasSchedule = _selectedFilter != 'all' && allEvents.isNotEmpty;
     final hasNote = notesProvider.hasNoteForDate(date);
     
     if (!hasSchedule && !hasNote) return const SizedBox.shrink();
@@ -567,14 +603,16 @@ class _CalendarScreenState extends State<CalendarScreen> {
         }
 
         // Показываем предупреждение, если нет расписания для выбранного фильтра
-        if (!hasFilteredSchedule && _selectedFilter != 'all') {
+        if (_selectedFilter != 'all' && !hasFilteredSchedule && hasAnySchedule) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
                   _selectedFilter == 'group'
                       ? 'Нет расписания для группы $_selectedGroup'
-                      : 'Нет расписания для преподавателя $_selectedTeacher'
+                      : 'Нет расписания для преподавателя $_selectedTeacher',
                 ),
                 duration: const Duration(seconds: 3),
               ),
@@ -582,54 +620,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
           });
         }
 
-        // Используем отфильтрованное расписание для календаря
-        final scheduleData = provider.getScheduleForCalendar();
-        
-        // Если нет данных, показываем пустой календарь
-        if (scheduleData == null || scheduleData.isEmpty) {
-          return const Center(
-            child: Text('Нет данных о расписании'),
-          );
-        }
-        
-        // Получаем список групп и преподавателей для фильтров
-        final groups = provider.groups;
-        final teachers = provider.teachers;
-        
-        // Получаем расписание для выбранного дня
-        final selectedDaySchedule = _selectedDay != null 
-            ? _getScheduleForDay(_selectedDay!) 
-            : <ScheduleItem>[];
-        
         return Scaffold(
           appBar: AppBar(
-            title: Row(
-              children: [
-                const Icon(Icons.calendar_today),
-                const SizedBox(width: 10),
-                const Text('Календарь'),
-                const Spacer(),
-                if (_selectedFilter != 'all')
-                  Chip(
-                    label: Text(_selectedFilter == 'group'
-                        ? _selectedGroup ?? ''
-                        : _selectedTeacher ?? ''),
-                    onDeleted: () {
-                      setState(() {
-                        _selectedFilter = 'all';
-                        _selectedGroup = null;
-                        _selectedTeacher = null;
-                      });
-                      _saveSettings();
-                    },
-                  ),
-              ],
-            ),
+            title: const Text('Календарь'),
             actions: [
               IconButton(
                 icon: const Icon(Icons.filter_list),
-                tooltip: 'Фильтр',
                 onPressed: _showFilterDialog,
+                tooltip: 'Фильтр',
               ),
             ],
           ),
@@ -680,7 +678,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                         color: Theme.of(context).colorScheme.onSurface,
                       ),
                       weekendTextStyle: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
+                        color: Theme.of(context).colorScheme.onSurface,
                       ),
                       outsideTextStyle: TextStyle(
                         color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
@@ -714,10 +712,130 @@ class _CalendarScreenState extends State<CalendarScreen> {
                         _selectedDay = selectedDay;
                         _focusedDay = focusedDay;
                       });
+                      
+                      // Вызываем обработчик для проверки пасхалки если это воскресенье
+                      if (selectedDay.weekday == DateTime.sunday) {
+                        _checkCalendarEasterEgg(context, selectedDay);
+                      }
                     },
                     calendarBuilders: CalendarBuilders(
                       markerBuilder: (context, date, events) {
                         return _buildEventMarkers(date, scheduleProvider, notesProvider);
+                      },
+                      // Добавляем builder для отображения дополнительной информации
+                      dowBuilder: (context, day) {
+                        // Названия дней недели
+                        final text = DateFormat.E('ru_RU').format(day);
+                        
+                        // Только воскресенье выделяем как выходной
+                        if (day.weekday == DateTime.sunday) {
+                          return Center(
+                            child: Text(
+                              text,
+                              style: TextStyle(color: Theme.of(context).colorScheme.error),
+                            ),
+                          );
+                        }
+                        return Center(child: Text(text));
+                      },
+                      // Заменяем cellBuilder на defaultBuilder, todayBuilder и selectedBuilder
+                      defaultBuilder: (context, day, focusedDay) {
+                        // Получаем события для дня
+                        final events = _getEventsForDay(day);
+                        final hasSchedule = events.isNotEmpty;
+                        final hasNote = notesProvider.hasNoteForDate(day);
+                        final isSunday = day.weekday == DateTime.sunday;
+                        final isFuture = day.isAfter(DateTime.now());
+                        
+                        return Container(
+                          margin: const EdgeInsets.all(2),
+                          child: Stack(
+                            children: [
+                              // Число месяца
+                              Center(
+                                child: Text(
+                                  '${day.day}',
+                                  style: TextStyle(
+                                    color: isSunday 
+                                      ? Theme.of(context).colorScheme.error
+                                      : Theme.of(context).colorScheme.onSurface,
+                                  ),
+                                ),
+                              ),
+                              
+                              // Информационные метки больше не отображаются в ячейках календаря
+                            ],
+                          ),
+                        );
+                      },
+                      selectedBuilder: (context, day, focusedDay) {
+                        // Получаем события для дня
+                        final events = _getEventsForDay(day);
+                        final hasSchedule = events.isNotEmpty;
+                        final hasNote = notesProvider.hasNoteForDate(day);
+                        
+                        return Container(
+                          margin: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.primary,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Stack(
+                            children: [
+                              // Число месяца
+                              Center(
+                                child: Text(
+                                  '${day.day}',
+                                  style: TextStyle(
+                                    color: Theme.of(context).colorScheme.onPrimary,
+                                  ),
+                                ),
+                              ),
+                              // Никаких надписей, только индикаторы добавляются через markerBuilder
+                            ],
+                          ),
+                        );
+                      },
+                      todayBuilder: (context, day, focusedDay) {
+                        // Получаем события для дня
+                        final events = _getEventsForDay(day);
+                        final hasSchedule = events.isNotEmpty;
+                        final hasNote = notesProvider.hasNoteForDate(day);
+                        
+                        return Container(
+                          margin: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Stack(
+                            children: [
+                              // Число месяца
+                              Center(
+                                child: Text(
+                                  '${day.day}',
+                                  style: TextStyle(
+                                    color: Theme.of(context).colorScheme.onPrimary,
+                                  ),
+                                ),
+                              ),
+                              // Никаких надписей, только индикаторы добавляются через markerBuilder
+                            ],
+                          ),
+                        );
+                      },
+                      outsideBuilder: (context, day, focusedDay) {
+                        return Container(
+                          margin: const EdgeInsets.all(2),
+                          child: Center(
+                            child: Text(
+                              '${day.day}',
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+                              ),
+                            ),
+                          ),
+                        );
                       },
                     ),
                     eventLoader: _getEventsForDay,
@@ -739,7 +857,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 Expanded(
                   child: Consumer2<ScheduleProvider, NotesProvider>(
                     builder: (context, provider, notesProvider, child) {
-                      final schedule = _getScheduleForDay(_selectedDay!);
+                      final allEvents = _getEventsForDay(_selectedDay!); // Все события без фильтра
+                      final schedule = _selectedFilter == 'all' ? [] : _getScheduleForDay(_selectedDay!);
                       final note = notesProvider.getNote(_selectedDay!);
                       
                       if (_noteController.text != note?.text) {
@@ -751,7 +870,38 @@ class _CalendarScreenState extends State<CalendarScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            if (schedule.isEmpty && (_selectedFilter != 'all')) ...[
+                            // Показываем сообщение о необходимости выбрать фильтр
+                            if (_selectedFilter == 'all') ...[
+                              Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.filter_alt_outlined,
+                                      size: 64,
+                                      color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      'Выберите фильтр для просмотра расписания',
+                                      textAlign: TextAlign.center,
+                                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    ElevatedButton.icon(
+                                      onPressed: _showFilterDialog,
+                                      icon: const Icon(Icons.filter_list),
+                                      label: const Text('Выбрать фильтр'),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 24),
+                            ]
+                            // Показываем сообщение, если нет расписания для выбранного фильтра
+                            else if (schedule.isEmpty && _selectedFilter != 'all') ...[
                               Center(
                                 child: Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
@@ -763,9 +913,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                                     ),
                                     const SizedBox(height: 16),
                                     Text(
-                                      _selectedFilter == 'group'
-                                          ? 'Нет расписания для группы ${_selectedGroup}'
-                                          : 'Нет расписания для преподавателя ${_selectedTeacher}',
+                                      _getDetailedStatusText(_selectedDay!, provider, allEvents.isNotEmpty),
                                       textAlign: TextAlign.center,
                                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
                                         color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
@@ -890,9 +1038,244 @@ class _CalendarScreenState extends State<CalendarScreen> {
     await prefs.setString('calendar_format', format.toString());
   }
 
+  // Получает детальный статус для отображения в расписании
+  String _getDetailedStatusText(DateTime day, ScheduleProvider provider, bool hasAnySchedule) {
+    final now = DateTime.now();
+    final isFuture = day.isAfter(now);
+    final isOneDayAhead = day.difference(now).inDays <= 1 && day.isAfter(now);
+    final isSunday = day.weekday == DateTime.sunday;
+    
+    // Если есть какое-то расписание на этот день, но нет для текущего фильтра
+    if (hasAnySchedule) {
+      if (_selectedFilter == 'group' && _selectedGroup != null) {
+        return 'Нет расписания для группы $_selectedGroup на ${_formatDate(DateFormat('d-MMM', 'ru_RU').format(day))}';
+      } else if (_selectedFilter == 'teacher' && _selectedTeacher != null) {
+        return 'Нет расписания для преподавателя $_selectedTeacher на ${_formatDate(DateFormat('d-MMM', 'ru_RU').format(day))}';
+      }
+    }
+    
+    // Проверяем состояние дня
+    if (isFuture) {
+      if (isOneDayAhead) {
+        return 'Расписание на ${_formatDate(DateFormat('d-MMM', 'ru_RU').format(day))} ещё не загружено\nОбновите данные позже';
+      } else {
+        return 'Расписание на ${_formatDate(DateFormat('d-MMM', 'ru_RU').format(day))} будет доступно позже';
+      }
+    } else if (isSunday) {
+      return 'Выходной день - воскресенье';
+    } else {
+      return 'На ${_formatDate(DateFormat('d-MMM', 'ru_RU').format(day))} нет данных о расписании';
+    }
+  }
+
+  // Получает текст статуса для дня без расписания (для отображения в маркерах календаря)
+  String _getStatusText(DateTime day, ScheduleProvider provider) {
+    final now = DateTime.now();
+    final isFuture = day.isAfter(now);
+    final isOneDayAhead = day.difference(now).inDays <= 1 && day.isAfter(now);
+    final isSunday = day.weekday == DateTime.sunday;
+    
+    // Общее расписание без фильтра
+    final allSchedule = provider.getScheduleForCalendar();
+    
+    if (allSchedule == null || allSchedule.isEmpty) {
+      return isFuture ? "Ожидается" : "Нет данных";
+    }
+    
+    // Проверяем, есть ли расписание для этого дня без учета фильтра
+    final dateStr = '${day.day.toString().padLeft(2, '0')}-${_getMonthStr(day.month)}';
+    final hasScheduleForDay = allSchedule.containsKey(dateStr);
+    
+    if (!hasScheduleForDay) {
+      if (isFuture && isOneDayAhead) {
+        return "Ожидается";
+      } else if (isSunday) {
+        return "Выходной";
+      } else if (isFuture) {
+        return "";
+      } else {
+        return "Нет данных";
+      }
+    }
+    
+    // Если есть расписание для дня, но после фильтрации ничего не осталось
+    if (_selectedFilter != 'all') {
+      if (_selectedFilter == 'group' && _selectedGroup != null) {
+        return "Нет для группы";
+      } else if (_selectedFilter == 'teacher' && _selectedTeacher != null) {
+        return "Нет для преп.";
+      }
+    }
+    
+    return "";
+  }
+
   @override
   void dispose() {
     _noteController.dispose();
     super.dispose();
+  }
+
+  // Расширяем класс CalendarScreen, добавив обработчик для пасхалки
+  bool _isSunday(DateTime date) {
+    return date.weekday == DateTime.sunday;
+  }
+  
+  void _checkCalendarEasterEgg(BuildContext context, DateTime date) async {
+    final now = DateTime.now();
+    final prefs = await SharedPreferences.getInstance();
+    
+    // Проверяем, не была ли уже найдена пасхалка
+    final eggFound = prefs.getBool('easter_egg_calendar_found') ?? false;
+    if (eggFound) return;
+    
+    // Получаем время последнего нажатия
+    final lastTapTimeStr = prefs.getString('last_sunday_tap_time');
+    
+    if (lastTapTimeStr != null) {
+      final lastTapTime = DateTime.parse(lastTapTimeStr);
+      final diff = now.difference(lastTapTime);
+      
+      // Если прошло меньше 1 секунды - это двойное нажатие
+      if (diff.inMilliseconds < 1000) {
+        // Отмечаем пасхалку как найденную
+        await prefs.setBool('easter_egg_calendar_found', true);
+        
+        // Показываем диалог
+        // ignore: use_build_context_synchronously
+        _showCalendarEasterEggDialog(context);
+        
+        // Очищаем время последнего нажатия
+        await prefs.remove('last_sunday_tap_time');
+        return;
+      }
+    }
+    
+    // Сохраняем время текущего нажатия
+    await prefs.setString('last_sunday_tap_time', now.toIso8601String());
+  }
+  
+  void _showCalendarEasterEggDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Text('📅', style: TextStyle(fontSize: 24)),
+            const SizedBox(width: 10),
+            const Text('Поздравляем!'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Вы нашли пасхалку!',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Пасхалка 3 из 3',
+              style: TextStyle(
+                fontSize: 14, 
+                color: Colors.grey,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.today),
+                  SizedBox(width: 8),
+                  Text('Воскресенье'),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              
+              // Проверяем, все ли пасхалки найдены
+              _checkAllEasterEggsFound(context);
+            },
+            child: const Text('Круто!'),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  // Проверяем, все ли пасхалки найдены
+  void _checkAllEasterEggsFound(BuildContext context) async {
+    final prefs = await SharedPreferences.getInstance();
+    final eggVersionFound = prefs.getBool('easter_egg_version_found') ?? false;
+    final eggSearchFound = prefs.getBool('easter_egg_search_found') ?? false;
+    final eggCalendarFound = prefs.getBool('easter_egg_calendar_found') ?? false;
+    
+    if (eggVersionFound && eggSearchFound && eggCalendarFound) {
+      final minigameUnlocked = prefs.getBool('minigame_unlocked') ?? false;
+      
+      if (!minigameUnlocked) {
+        // Отмечаем мини-игру как разблокированную
+        await prefs.setBool('minigame_unlocked', true);
+        
+        // Показываем диалог о разблокировке мини-игры
+        // ignore: use_build_context_synchronously
+        _showMinigameUnlockedDialog(context);
+      }
+    }
+  }
+  
+  // Показываем диалог о разблокировке мини-игры
+  void _showMinigameUnlockedDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('🎮 Мини-игра разблокирована!'),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Поздравляем! Вы нашли все пасхалки и разблокировали мини-игру!',
+              style: TextStyle(fontSize: 16),
+            ),
+            SizedBox(height: 20),
+            Text(
+              'Мини-игра доступна через меню навигации.',
+              style: TextStyle(fontSize: 14),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              // Закрываем диалог
+              Navigator.pop(context);
+              
+              // Принудительно обновляем навигацию в MyApp
+              final state = context.findAncestorStateOfType<MyHomePageState>();
+              if (state != null) {
+                state.checkAndUpdateNavigation();
+              }
+            },
+            child: const Text('Круто!'),
+          ),
+        ],
+      ),
+    );
   }
 } 

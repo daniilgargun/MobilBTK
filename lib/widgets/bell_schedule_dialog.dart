@@ -104,56 +104,28 @@ class BellScheduleDialog extends StatelessWidget {
                 const SizedBox(height: 16),
                 _buildDaySchedule(
                   context, 
-                  'Понедельник, среда, пятница', 
-                  [
-                    ('1)', '8:00-8:45', '8:55-9:40'),
-                    ('2)', '9:50-10:35', '11:00-11:45'),
-                    ('3)', '12:20-13:05', '13:15-14:00'),
-                    ('4)', '14:10-14:55', '15:05-15:50'),
-                    ('5)', '16:00-16:45', '16:55-17:40'),
-                    ('6)', '17:50-18:35', '18:40-19:25'),
-                  ],
+                  LessonTime.getDaysWithSameSchedule("normal"), 
+                  LessonTime.getLessonTimesForUI("normal"),
                 ),
                 const SizedBox(height: 16),
                 _buildDaySchedule(
                   context, 
-                  'Вторник', 
-                  [
-                    ('1)', '8:00-8:45', '8:55-9:40'),
-                    ('2)', '9:50-10:35', '11:00-11:45'),
-                    ('3)', '12:20-13:05', '13:15-14:00'),
-                    ('4)', '15:05-15:50', '16:00-16:45'),
-                    ('5)', '16:55-17:40', '17:50-18:35'),
-                    ('6)', '18:45-19:30', '19:35-20:20'),
-                  ],
-                  specialHour: 'Классный час: 14:10-14:55',
+                  LessonTime.getDaysWithSameSchedule("tuesday"), 
+                  LessonTime.getLessonTimesForUI("tuesday"),
+                  specialHour: LessonTime.getSpecialHourInfo("tuesday"),
                 ),
                 const SizedBox(height: 16),
                 _buildDaySchedule(
                   context, 
-                  'Четверг', 
-                  [
-                    ('1)', '8:00-8:45', '8:55-9:40'),
-                    ('2)', '9:50-10:35', '11:00-11:45'),
-                    ('3)', '12:20-13:05', '13:15-14:00'),
-                    ('4)', '14:45-15:30', '15:40-16:25'),
-                    ('5)', '16:35-17:20', '17:30-18:15'),
-                    ('6)', '18:25-19:10', '19:15-20:00'),
-                  ],
-                  specialHour: 'Часы информации: 14:10-14:35',
+                  LessonTime.getDaysWithSameSchedule("thursday"), 
+                  LessonTime.getLessonTimesForUI("thursday"),
+                  specialHour: LessonTime.getSpecialHourInfo("thursday"),
                 ),
                 const SizedBox(height: 16),
                 _buildDaySchedule(
                   context, 
-                  'Суббота', 
-                  [
-                    ('1)', '8:00-8:45', '8:55-9:40'),
-                    ('2)', '9:50-10:35', '10:45-11:30'),
-                    ('3)', '11:50-12:35', '12:40-13:25'),
-                    ('4)', '13:35-14:20', '14:25-15:10'),
-                    ('5)', '15:20-16:05', '16:10-16:55'),
-                    ('6)', '17:05-17:50', '17:55-18:40'),
-                  ],
+                  LessonTime.getDaysWithSameSchedule("saturday"), 
+                  LessonTime.getLessonTimesForUI("saturday"),
                 ),
               ],
             ),
@@ -163,7 +135,7 @@ class BellScheduleDialog extends StatelessWidget {
     );
   }
 
-  Widget _buildDaySchedule(BuildContext context, String title, List<(String, String, String)> times, {String? specialHour}) {
+  Widget _buildDaySchedule(BuildContext context, String title, List<(String, String, String)> times, {Map<String, String>? specialHour}) {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -225,7 +197,7 @@ class BellScheduleDialog extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
-              specialHour,
+              "${specialHour['name']}: ${specialHour['time']}",
               style: TextStyle(
                 color: colorScheme.primary,
                 fontWeight: FontWeight.w500,

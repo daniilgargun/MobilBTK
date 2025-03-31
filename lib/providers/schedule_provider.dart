@@ -8,6 +8,7 @@ import 'package:intl/intl.dart' as intl;
 import 'package:flutter/foundation.dart';
 import '../services/connectivity_service.dart';
 import 'dart:async';
+import 'package:flutter/widgets.dart';
 
 class ScheduleProvider extends ChangeNotifier {
   final ParserService _parser = ParserService();
@@ -124,6 +125,18 @@ class ScheduleProvider extends ChangeNotifier {
       if ((currentSchedule.isNotEmpty || archiveSchedule.isNotEmpty) && _mounted) {
         _currentScheduleData = currentSchedule;
         _fullScheduleData = archiveSchedule;
+
+        // Проверяем, не пусто ли текущее расписание, и если да - восстанавливаем из архива
+        if (_currentScheduleData == null || _currentScheduleData!.isEmpty) {
+          debugPrint('🔄 Текущее расписание пусто, восстанавливаем из архива');
+          if (_fullScheduleData != null && _fullScheduleData!.isNotEmpty) {
+            _currentScheduleData = Map.from(_fullScheduleData!);
+            // Сохраняем восстановленные данные
+            await _db.saveCurrentSchedule(_currentScheduleData!);
+            debugPrint('✅ Текущее расписание восстановлено из архива');
+          }
+        }
+        
         notifyListeners();
         
         if (!await ConnectivityService().isOnline()) {
@@ -134,7 +147,8 @@ class ScheduleProvider extends ChangeNotifier {
       }
 
       if (!await ConnectivityService().isOnline()) {
-        if (currentSchedule.isEmpty && archiveSchedule.isEmpty) {
+        if ((currentSchedule.isEmpty && archiveSchedule.isEmpty) ||
+            (_currentScheduleData == null || _currentScheduleData!.isEmpty)) {
           _handleError(
             'Нет данных',
             details: 'Для первой загрузки требуется подключение к интернету',
@@ -185,6 +199,9 @@ class ScheduleProvider extends ChangeNotifier {
       final result = await compute(_parseScheduleIsolate, _parser.url);
       
       if (result.$1 != null) {
+        // Сохраняем предыдущие данные для сравнения
+        final previousScheduleKeys = _currentScheduleData?.keys.toList() ?? [];
+        
         _currentScheduleData = result.$1;
         await _db.saveCurrentSchedule(_currentScheduleData!);
         await _db.archiveSchedule(_currentScheduleData!);
@@ -203,13 +220,21 @@ class ScheduleProvider extends ChangeNotifier {
         _isLoaded = true;
         _error = null;
         
-        if (!silent) {
-          _showSuccess = true;
-          _successMessage = 'Расписание успешно обновлено';
-        }
-
         // Очищаем кэш после успешного обновления
         clearCache();
+        
+        // Проверяем, появились ли новые дни
+        final currentScheduleKeys = _currentScheduleData?.keys.toList() ?? [];
+        final hasNewDays = currentScheduleKeys.length > previousScheduleKeys.length;
+        
+        if (!silent) {
+          _showSuccess = true;
+          if (hasNewDays) {
+            _successMessage = 'Расписание обновлено. Добавлены новые дни!';
+          } else {
+            _successMessage = 'Расписание успешно обновлено';
+          }
+        }
       } else if (result.$4 != null) {
         _handleError('Ошибка обновления', details: result.$4);
       }
@@ -223,6 +248,8 @@ class ScheduleProvider extends ChangeNotifier {
       _isLoading = false;
       _isUpdating = false;
       _updateStatus(null);
+      
+      // Явно уведомляем слушателей для обновления UI
       notifyListeners();
     }
   }
@@ -439,33 +466,8 @@ class ScheduleProvider extends ChangeNotifier {
 
   // Получает расписание для календаря с учетом настроек отображения
   Map<String, Map<String, List<ScheduleItem>>>? getScheduleForCalendar() {
-    if (_fullScheduleData == null) return null;
-    
-    // Используем значение, выбранное пользователем для отображения
-    final displayDays = _displayDays;
-    
-    // Фильтруем по дате для отображения
-    final now = DateTime.now();
-    final cutoffDate = now.subtract(Duration(days: displayDays));
-    
-    final filteredData = <String, Map<String, List<ScheduleItem>>>{};
-    
-    for (var entry in _fullScheduleData!.entries) {
-      try {
-        final dateStr = entry.key;
-        final date = _parseDateString(dateStr);
-        
-        // Проверяем, находится ли дата в пределах указанного периода
-        // Включаем только даты, которые не старше cutoffDate и не позже now + 1 день
-        if (!date.isBefore(cutoffDate) && !date.isAfter(now.add(const Duration(days: 1)))) {
-          filteredData[dateStr] = entry.value;
-        }
-      } catch (e) {
-        debugPrint('Ошибка при фильтрации дат для календаря: $e');
-      }
-    }
-    
-    return filteredData;
+    // Возвращаем полные данные архива для отображения в календаре
+    return _fullScheduleData;
   }
 
   // Подготавливаем данные заранее
@@ -522,9 +524,27 @@ class ScheduleProvider extends ChangeNotifier {
 
   @override
   void clearCache() {
-    _filteredCache.clear();
     _preparedScheduleCache.clear();
+    _filteredCache.clear();
     _isDataPrepared = false;
+    // Необходимо принудительно уведомить слушателей при очистке кэша
     notifyListeners();
+  }
+
+  // Добавим метод для синхронизации currentScheduleData с fullScheduleData
+  Future<void> syncScheduleData() async {
+    try {
+      if (_fullScheduleData != null && _fullScheduleData!.isNotEmpty) {
+        if (_currentScheduleData == null || _currentScheduleData!.isEmpty) {
+          debugPrint('🔄 Синхронизация данных: восстановление текущего расписания из архива');
+          _currentScheduleData = Map.from(_fullScheduleData!);
+          await _db.saveCurrentSchedule(_currentScheduleData!);
+          notifyListeners();
+          debugPrint('✅ Синхронизация выполнена успешно');
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ Ошибка при синхронизации данных: $e');
+    }
   }
 }

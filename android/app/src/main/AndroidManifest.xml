@@ -1,6 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
     
     <application
         android:label="БТК Расписание"
@@ -8,6 +9,12 @@
         android:icon="@mipmap/ic_launcher"
         android:enableOnBackInvokedCallback="true"
         android:usesCleartextTraffic="true">
+
+        <!-- Метаданные для Яндекс.Рекламы -->
+        <meta-data
+            android:name="com.yandex.ads.network.INITIALIZE_ON_STARTUP"
+            android:value="true" />
+            
         <activity
             android:name=".MainActivity"
             android:exported="true"

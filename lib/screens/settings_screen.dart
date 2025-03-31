@@ -9,6 +9,7 @@ import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import '../main.dart';
 import 'package:intl/intl.dart' as intl;
+import '../widgets/developer_ads_widget.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -25,6 +26,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _lastUpdateInfo = '';
   Map<String, String> _cacheInfo = {};
   bool _showCacheDetails = false;
+  int _cookieCount = 0;
+  bool _easterEggVersionFound = false;
+  bool _easterEggSearchFound = false;
+  bool _easterEggCalendarFound = false;
+  bool _minigameUnlocked = false;
 
   @override
   void initState() {
@@ -33,6 +39,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _loadAppVersion();
     _loadLastUpdateInfo();
     _calculateCacheSize();
+    _loadCookieCount();
+    _loadEasterEggsStatus();
   }
 
   // Загружаем настройки из памяти телефона
@@ -155,6 +163,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  // Загружаем количество печенек
+  Future<void> _loadCookieCount() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _cookieCount = prefs.getInt('cookie_count') ?? 0;
+    });
+  }
+
+  // Загружаем статус найденных пасхалок
+  Future<void> _loadEasterEggsStatus() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _easterEggVersionFound = prefs.getBool('easter_egg_version_found') ?? false;
+      _easterEggSearchFound = prefs.getBool('easter_egg_search_found') ?? false;
+      _easterEggCalendarFound = prefs.getBool('easter_egg_calendar_found') ?? false;
+      _minigameUnlocked = prefs.getBool('minigame_unlocked') ?? false;
+    });
+    
+    // Проверяем, не найдены ли все пасхалки
+    _checkMinigameUnlock();
+  }
+  
+  // Сохраняем статус пасхалки
+  Future<void> _saveEasterEggStatus(String eggName, bool found) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(eggName, found);
+  }
+  
+  // Проверяем, все ли пасхалки найдены для разблокировки мини-игры
+  Future<void> _checkMinigameUnlock() async {
+    if (_easterEggVersionFound && _easterEggSearchFound && _easterEggCalendarFound && !_minigameUnlocked) {
+      // Если все пасхалки найдены, но мини-игра еще не разблокирована
+      setState(() {
+        _minigameUnlocked = true;
+      });
+      
+      // Сохраняем статус разблокировки
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('minigame_unlocked', true);
+      
+      // Показываем уведомление о разблокировке
+      if (mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _showMinigameUnlockedDialog();
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -237,6 +294,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
           ),
           ListTile(
+            title: const Text('Художник'),
+            subtitle: const Text('Просто Юрик'),
+            leading: Icon(
+              Icons.brush_outlined,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+          ),
+          ListTile(
+            title: const Text('Пожертвовать печенькой'),
+            subtitle: const Text('Поддержать разработчика'),
+            leading: Icon(
+              Icons.cookie_outlined,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            trailing: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.cookie, size: 16, color: Colors.amber),
+                  const SizedBox(width: 4),
+                  Text(
+                    '$_cookieCount',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            onTap: () async {
+              await _showDonationDialog();
+              // Счетчик обновляется автоматически через callback
+            },
+          ),
+          ListTile(
             title: const Text('Сайт колледжа'),
             subtitle: const Text('bartc.by'),
             leading: Icon(
@@ -263,6 +361,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               Icons.info_outline,
               color: Theme.of(context).colorScheme.primary,
             ),
+            onTap: _handleVersionTap,
           ),
         ],
       ),
@@ -395,12 +494,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       size: 24,
                     ),
                     const SizedBox(width: 8),
-                    Text(
-                      '@Daniilgargun',
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.primary,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
+                    Flexible(
+                      child: Text(
+                        '@Daniilgargun',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.primary,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ],
@@ -415,6 +517,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: const Text('Закрыть'),
           ),
         ],
+      ),
+    );
+  }
+
+  // Добавляем метод для показа диалога пожертвования
+  Future<void> _showDonationDialog() async {
+    await showDialog(
+      context: context,
+      barrierDismissible: false, // Запрещаем закрытие при нажатии за пределами диалога
+      builder: (context) => DeveloperAdsWidget(
+        onCookieCountUpdated: () {
+          _loadCookieCount();
+        },
       ),
     );
   }
@@ -595,6 +710,213 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         const Divider(),
       ],
+    );
+  }
+
+  // Обработчик нажатий на версию для пасхалки
+  int _versionTapCount = 0;
+  DateTime? _lastTapTime;
+  bool _easterEggShown = false; // Флаг для отслеживания показа пасхалки
+  
+  void _handleVersionTap() {
+    // Если пасхалка уже показана, игнорируем дополнительные нажатия
+    if (_easterEggShown) return;
+    
+    final now = DateTime.now();
+    
+    // Сброс счетчика если прошло более 0.5 секунды между нажатиями
+    if (_lastTapTime != null && 
+        now.difference(_lastTapTime!).inMilliseconds > 500) {
+      _versionTapCount = 0;
+    }
+    
+    _lastTapTime = now;
+    _versionTapCount++;
+    
+    if (_versionTapCount == 3) {
+      _versionTapCount = 0;
+      _easterEggShown = true; // Устанавливаем флаг, чтобы предотвратить повторное открытие
+      _showEasterEgg();
+    }
+  }
+  
+  void _showEasterEgg() {
+    // Отмечаем первую пасхалку как найденную
+    _easterEggVersionFound = true;
+    _saveEasterEggStatus('easter_egg_version_found', true);
+    _checkMinigameUnlock();
+    
+    showDialog(
+      context: context,
+      barrierDismissible: false, // Запрещаем закрытие при нажатии за пределами диалога
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            TweenAnimationBuilder<double>(
+              tween: Tween<double>(begin: 0.0, end: 1.0),
+              duration: const Duration(milliseconds: 800),
+              builder: (context, value, child) {
+                return Transform.scale(
+                  scale: value.clamp(0.0, 1.0),
+                  child: const Text('😎', style: TextStyle(fontSize: 24)),
+                );
+              },
+            ),
+            const SizedBox(width: 10),
+            TweenAnimationBuilder<double>(
+              tween: Tween<double>(begin: 0.0, end: 1.0),
+              duration: const Duration(milliseconds: 1000),
+              curve: Curves.easeOut, // Заменил elasticOut на безопасный easeOut
+              builder: (context, value, child) {
+                return Transform.scale(
+                  scale: value.clamp(0.0, 1.0),
+                  child: const Text('Поздравляем!'),
+                );
+              },
+            ),
+          ],
+        ),
+        content: SingleChildScrollView( // Добавил прокрутку на случай переполнения
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TweenAnimationBuilder<double>(
+                tween: Tween<double>(begin: 0.0, end: 1.0),
+                duration: const Duration(milliseconds: 1200),
+                curve: Curves.easeOutCubic, // Заменил на более безопасную кривую
+                builder: (context, value, child) {
+                  // Безопасное значение для opacity между 0.0 и 1.0
+                  final safeOpacity = value.clamp(0.0, 1.0);
+                  return Opacity(
+                    opacity: safeOpacity,
+                    child: Transform.translate(
+                      offset: Offset(0, 20 * (1 - safeOpacity)),
+                      child: const Text(
+                        'Вы нашли пасхалку!',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                'Пасхалка 1 из 3',
+                style: TextStyle(
+                  fontSize: 14, 
+                  color: Colors.grey,
+                ),
+              ),
+              const SizedBox(height: 20),
+              TweenAnimationBuilder<double>(
+                tween: Tween<double>(begin: 0.0, end: 1.0),
+                duration: const Duration(milliseconds: 1500),
+                curve: Curves.easeOut, // Заменил bounceOut на более стабильный
+                builder: (context, value, child) {
+                  return Transform.scale(
+                    scale: value.clamp(0.0, 1.0),
+                    child: Image.asset(
+                      'assets/images/easter_egg.png',
+                      width: 150, // Уменьшил размер для избежания переполнения
+                      height: 150,
+                      errorBuilder: (context, error, stackTrace) {
+                        return TweenAnimationBuilder<double>(
+                          tween: Tween<double>(begin: 0.0, end: 1.0),
+                          duration: const Duration(milliseconds: 1000),
+                          curve: Curves.easeOut, // Безопасная кривая
+                          builder: (context, value, child) {
+                            // Заменяем Transform.rotate на более подходящую анимацию
+                            return Transform.scale(
+                              scale: value.clamp(0.0, 1.0),
+                              child: Container(
+                                width: 80, // Уменьшил размер
+                                height: 80,
+                                decoration: BoxDecoration(
+                                  color: Theme.of(context).colorScheme.primaryContainer,
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                child: Icon(
+                                  Icons.emoji_events,
+                                  size: 40,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TweenAnimationBuilder<double>(
+            tween: Tween<double>(begin: 0.0, end: 1.0),
+            duration: const Duration(milliseconds: 1500), // Уменьшил длительность
+            curve: Curves.easeIn, // Более простая кривая
+            builder: (context, value, child) {
+              return Opacity(
+                opacity: value.clamp(0.0, 1.0), // Гарантируем безопасное значение
+                child: TextButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    // Сбрасываем флаг после закрытия диалога
+                    Future.delayed(const Duration(milliseconds: 300), () {
+                      if (mounted) {
+                        setState(() {
+                          _easterEggShown = false;
+                        });
+                        
+                        // Проверяем, не нашли ли мы все пасхалки, и обновляем навигацию
+                        if (_easterEggVersionFound && _easterEggSearchFound && _easterEggCalendarFound) {
+                          // Принудительно обновляем навигацию в MyApp
+                          final state = context.findAncestorStateOfType<MyHomePageState>();
+                          if (state != null) {
+                            state.checkAndUpdateNavigation();
+                          }
+                        }
+                      }
+                    });
+                  },
+                  child: const Text('Круто!', style: TextStyle(fontSize: 16)),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Добавляем метод для показа диалога разблокировки мини-игры
+  Future<void> _showMinigameUnlockedDialog() async {
+    await showDialog(
+      context: context,
+      barrierDismissible: false, // Запрещаем закрытие при нажатии за пределами диалога
+      builder: (context) => AlertDialog(
+        title: const Text('Мини-игра разблокирована!'),
+        content: const Text('Поздравляем! Вы разблокировали мини-игру.'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              
+              // Принудительно обновляем навигацию в MyApp
+              final state = context.findAncestorStateOfType<MyHomePageState>();
+              if (state != null) {
+                state.checkAndUpdateNavigation();
+              }
+            },
+            child: const Text('Закрыть'),
+          ),
+        ],
+      ),
     );
   }
 } 

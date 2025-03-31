@@ -9,6 +9,8 @@ import '../widgets/bell_schedule_dialog.dart';
 import '../widgets/error_snackbar.dart';
 import 'package:share_plus/share_plus.dart';
 import '../services/connectivity_service.dart';
+import '../main.dart'; // Импортируем main.dart
+
 class ScheduleScreen extends StatefulWidget {
   const ScheduleScreen({super.key});
 
@@ -25,12 +27,22 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   static const EdgeInsets _listPadding = EdgeInsets.all(8);
   static const Duration _animationDuration = Duration(milliseconds: 300);
   bool _hasShownOfflineWarning = false;
+  bool _isLoading = false;
   
   // Кэш для отфильтрованных данных
   Map<String, List<ScheduleItem>> _filteredCache = {};
   
   // Подготовленные данные для всех дат
   Map<String, List<ScheduleItem>> _preparedData = {};
+
+  ScheduleProvider? _scheduleProvider;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Сохраняем ссылку на провайдер
+    _scheduleProvider = Provider.of<ScheduleProvider>(context, listen: false);
+  }
 
   @override
   void initState() {
@@ -54,6 +66,153 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   Future<void> _saveSearchQuery(String query) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_searchQueryKey, query);
+    
+    // Проверяем на пасхалку в поиске
+    if (query.toLowerCase() == 'minigame') {
+      _checkSearchEasterEgg();
+    }
+  }
+
+  // Проверка пасхалки в поиске
+  void _checkSearchEasterEgg() async {
+    final prefs = await SharedPreferences.getInstance();
+    final eggFound = prefs.getBool('easter_egg_search_found') ?? false;
+    
+    if (!eggFound) {
+      // Отмечаем пасхалку как найденную
+      await prefs.setBool('easter_egg_search_found', true);
+      
+      // Показываем диалог о найденной пасхалке
+      if (mounted) {
+        _showSearchEasterEggDialog();
+      }
+    }
+  }
+  
+  // Показываем диалог пасхалки поиска
+  void _showSearchEasterEggDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Text('🔍', style: TextStyle(fontSize: 24)),
+            const SizedBox(width: 10),
+            const Text('Поздравляем!'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Вы нашли пасхалку!',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Пасхалка 2 из 3',
+              style: TextStyle(
+                fontSize: 14, 
+                color: Colors.grey,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.search),
+                  SizedBox(width: 8),
+                  Text('minigame'),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              
+              // Проверяем, все ли пасхалки найдены
+              _checkAllEasterEggsFound();
+            },
+            child: const Text('Круто!'),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  // Проверяем, все ли пасхалки найдены
+  void _checkAllEasterEggsFound() async {
+    final prefs = await SharedPreferences.getInstance();
+    final eggVersionFound = prefs.getBool('easter_egg_version_found') ?? false;
+    final eggSearchFound = prefs.getBool('easter_egg_search_found') ?? false;
+    final eggCalendarFound = prefs.getBool('easter_egg_calendar_found') ?? false;
+    
+    if (eggVersionFound && eggSearchFound && eggCalendarFound) {
+      final minigameUnlocked = prefs.getBool('minigame_unlocked') ?? false;
+      
+      if (!minigameUnlocked) {
+        // Отмечаем мини-игру как разблокированную
+        await prefs.setBool('minigame_unlocked', true);
+        
+        // Показываем диалог о разблокировке мини-игры
+        if (mounted) {
+          _showMinigameUnlockedDialog();
+        }
+      }
+    }
+  }
+  
+  // Показываем диалог о разблокировке мини-игры
+  void _showMinigameUnlockedDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('🎮 Мини-игра разблокирована!'),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Поздравляем! Вы нашли все пасхалки и разблокировали мини-игру!',
+              style: TextStyle(fontSize: 16),
+            ),
+            SizedBox(height: 20),
+            Text(
+              'Мини-игра доступна через меню навигации.',
+              style: TextStyle(fontSize: 14),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              // Закрываем диалог
+              Navigator.pop(context);
+              
+              // Принудительно обновляем навигацию в MyApp
+              final state = context.findAncestorStateOfType<MyHomePageState>();
+              if (state != null) {
+                state.checkAndUpdateNavigation();
+              }
+            },
+            child: const Text('Круто!'),
+          ),
+        ],
+      ),
+    );
   }
 
   String _formatDate(String dateStr) {
@@ -461,6 +620,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     if (provider.scheduleData == null) return;
     
     _preparedData.clear();
+    _filteredCache.clear();
+    
     for (var date in provider.scheduleData!.keys) {
       final daySchedule = provider.scheduleData![date]!;
       final allLessons = <ScheduleItem>[];
@@ -472,6 +633,19 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       // Сортируем по номеру пары
       allLessons.sort((a, b) => a.lessonNumber.compareTo(b.lessonNumber));
       _preparedData[date] = allLessons;
+    }
+    
+    // Проверяем, не вышли ли мы за пределы доступных дней после обновления данных
+    if (provider.scheduleData!.isNotEmpty) {
+      if (_currentPage >= provider.scheduleData!.length) {
+        _currentPage = provider.scheduleData!.length - 1;
+        // Обновляем позицию PageController при изменении индекса
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_pageController.hasClients) {
+            _pageController.jumpToPage(_currentPage);
+          }
+        });
+      }
     }
   }
 
@@ -539,8 +713,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       ),
       body: Consumer<ScheduleProvider>(
         builder: (context, provider, child) {
-          // Подготавливаем данные при первой загрузке или обновлении
-          if (provider.scheduleData != null && _preparedData.isEmpty) {
+          // Подготавливаем данные при первой загрузке или обновлении расписания
+          if (provider.scheduleData != null && 
+             (_preparedData.isEmpty || provider.scheduleData!.length != _preparedData.length)) {
             _prepareData(provider);
           }
 
@@ -592,6 +767,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             });
           }
 
+          // Проверяем, есть ли данные в fullScheduleData, но нет в scheduleData
+          final hasArchiveButNoCurrentData = 
+              provider.fullScheduleData != null && 
+              provider.fullScheduleData!.isNotEmpty && 
+              (provider.scheduleData == null || provider.scheduleData!.isEmpty);
+
           return Stack(
             children: [
               // Основной контент
@@ -613,7 +794,28 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       const Text('Нет данных'),
-                      if (!provider.isOffline)
+                      const SizedBox(height: 16),
+                      if (hasArchiveButNoCurrentData)
+                        ElevatedButton.icon(
+                          onPressed: () async {
+                            setState(() {
+                              _isLoading = true;
+                            });
+                            await provider.syncScheduleData();
+                            setState(() {
+                              _isLoading = false;
+                              // Обновляем кэш
+                              _prepareData(provider);
+                            });
+                          },
+                          icon: const Icon(Icons.sync_problem),
+                          label: const Text('Восстановить расписание'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Theme.of(context).colorScheme.primary,
+                            foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                          ),
+                        ),
+                      if (!provider.isOffline && !hasArchiveButNoCurrentData)
                         ElevatedButton(
                           onPressed: () => provider.loadSchedule(),
                           child: const Text('Повторить загрузку'),
@@ -858,6 +1060,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     _filteredCache.clear();
     _preparedData.clear();
     _hasShownOfflineWarning = false;
+    
+    // Удаляем слушатель при уничтожении виджета
+    _scheduleProvider?.removeListener(_onScheduleDataChanged);
     super.dispose();
   }
 
@@ -900,9 +1105,36 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
   // Загружает данные при запуске
   Future<void> _loadData() async {
-    final provider = context.read<ScheduleProvider>();
+    if (!mounted || _scheduleProvider == null) return;
+    
     // Загружаем последовательно
-    await provider.loadSchedule();
-    await provider.loadGroupsAndTeachers();
+    await _scheduleProvider!.loadSchedule();
+    await _scheduleProvider!.loadGroupsAndTeachers();
+    
+    if (!mounted) return;
+    
+    // Проверяем синхронизацию данных
+    if (_scheduleProvider!.scheduleData == null || _scheduleProvider!.scheduleData!.isEmpty) {
+      if (_scheduleProvider!.fullScheduleData != null && _scheduleProvider!.fullScheduleData!.isNotEmpty) {
+        debugPrint('🔄 Запуск синхронизации расписания из архива');
+        await _scheduleProvider!.syncScheduleData();
+        if (!mounted) return;
+        _prepareData(_scheduleProvider!);
+      }
+    }
+    
+    // Устанавливаем слушатель на изменение данных в провайдере
+    _scheduleProvider!.addListener(_onScheduleDataChanged);
+  }
+  
+  // Обработчик изменения данных в провайдере
+  void _onScheduleDataChanged() {
+    if (!mounted || _scheduleProvider == null) return;
+    
+    if (_scheduleProvider!.scheduleData != null) {
+      setState(() {
+        _prepareData(_scheduleProvider!);
+      });
+    }
   }
 } 
