@@ -155,7 +155,7 @@ class MinigameScreen extends StatefulWidget {
   State<MinigameScreen> createState() => _MinigameScreenState();
 }
 
-class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProviderStateMixin {
+class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   // Константы игры
   static const int boardSize = 8; // Размер доски
   static const int maxBlockCount = 3; // Максимум блоков для выбора
@@ -197,6 +197,22 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
   // Добавляем GlobalKey для получения размеров игрового поля
   final GlobalKey _boardKey = GlobalKey();
   
+  // Переменные для анимации исчезающих линий
+  List<int> animatingRows = [];
+  List<int> animatingCols = [];
+  bool isAnimatingLines = false;
+  double lineOpacity = 1.0;
+  
+  // Переменные для подсветки рядов и столбцов, которые будут заполнены
+  List<int> highlightRows = [];
+  List<int> highlightCols = [];
+  
+  // Переменные для отображения комбо и бонусных очков
+  int comboCount = 0;
+  int lastLinesClearedCount = 0;
+  int bonusPoints = 0;
+  bool showComboAnimation = false;
+  
   @override
   void initState() {
     super.initState();
@@ -209,6 +225,9 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
         (_) => Cell(),
       ),
     );
+    
+    // Добавляем обработчик жизненного цикла приложения
+    WidgetsBinding.instance.addObserver(this);
     
     // Инициализация контроллера анимации
     _animationController = AnimationController(
@@ -232,6 +251,14 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
   }
   
   @override
+  void dispose() {
+    // Удаляем обработчик жизненного цикла
+    WidgetsBinding.instance.removeObserver(this);
+    _animationController.dispose();
+    super.dispose();
+  }
+  
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     
@@ -247,9 +274,22 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
   }
   
   @override
-  void dispose() {
-    _animationController.dispose();
-    super.dispose();
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    
+    // Проверяем состояние жизненного цикла приложения
+    if (state == AppLifecycleState.resumed) {
+      // Приложение вернулось с фона - проверяем наличие анимирующихся линий
+      if (isAnimatingLines && (animatingRows.isNotEmpty || animatingCols.isNotEmpty)) {
+        // Немедленно завершаем анимацию и очищаем линии
+        _finishLineAnimation(animatingRows, animatingCols);
+      }
+    } else if (state == AppLifecycleState.paused) {
+      // Приложение уходит в фон - принудительно очищаем анимирующиеся линии
+      if (isAnimatingLines && (animatingRows.isNotEmpty || animatingCols.isNotEmpty)) {
+        _finishLineAnimation(animatingRows, animatingCols);
+      }
+    }
   }
   
   // Инициализация и загрузка состояния игры
@@ -457,7 +497,7 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
     for (int i = 0; i < block.shape.length; i++) {
       for (int j = 0; j < block.shape[i].length; j++) {
         // Если ячейка блока заполнена
-        if (block.shape[i][j] == 1) {
+        if (block.shape[i][j]) {
           hasAtLeastOneCell = true;
           final int boardRow = row + i;
           final int boardCol = col + j;
@@ -604,7 +644,20 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
   void _restartGame() {
     setState(() {
       score = 0;
-      _initNewGame(); // Заменяем _initGame на _initNewGame
+      
+      // Очищаем доску
+      for (int i = 0; i < boardSize; i++) {
+        for (int j = 0; j < boardSize; j++) {
+          board[i][j].isFilled = false;
+          board[i][j].color = Colors.transparent;
+        }
+      }
+      
+      // Полностью сбрасываем состояние игры и доступные блоки
+      placedBlocksCount = 0;
+      availableBlocks.clear();
+      _generateBlocks();
+      
       gameState = GameState.playing;
       _saveGameState();
     });
@@ -643,45 +696,167 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
       }
     }
     
-    // Очищаем заполненные строки и столбцы
-    for (int row in fullRows) {
-      for (int j = 0; j < boardSize; j++) {
-        board[row][j].isFilled = false;
-        board[row][j].color = Colors.transparent;
-      }
-    }
-    
-    for (int col in fullCols) {
-      for (int i = 0; i < boardSize; i++) {
-        board[i][col].isFilled = false;
-        board[i][col].color = Colors.transparent;
-      }
-    }
-    
-    // Начисляем очки
+    // Немедленно начисляем очки в системе и обновляем состояние
     int clearedLines = fullRows.length + fullCols.length;
     if (clearedLines > 0) {
-      // Даем бонус за несколько линий сразу
-      int basePoints = 10;
-      int totalPoints = basePoints * clearedLines;
-      
-      if (clearedLines >= 2) {
-        totalPoints = (totalPoints * 1.5).toInt(); // Бонус за 2+ линии
+      // Создаем структуру полных линий для анимации
+      if (fullRows.isNotEmpty || fullCols.isNotEmpty) {
+        setState(() {
+          animatingRows = fullRows;
+          animatingCols = fullCols;
+          isAnimatingLines = true;
+          lineOpacity = 1.0;
+        });
+        
+        // Рассчитываем очки с комбо
+        _calculateAndApplyScore(clearedLines);
+        
+        // Сразу очищаем линии в системе, но с анимацией для пользователя
+        _clearLinesInSystem(fullRows, fullCols);
+        
+        // Запускаем анимацию исчезновения линий для пользователя
+        _animateLineClearing(fullRows, fullCols);
       }
-      if (clearedLines >= 3) {
-        totalPoints = (totalPoints * 1.5).toInt(); // Дополнительный бонус за 3+ линий
-      }
-      
-      setState(() {
-        score += totalPoints;
-      });
-      
-      _saveHighScore();
+    } else {
+      // Сбрасываем комбо, если нет собранных линий
+      comboCount = 0;
     }
+  }
+  
+  // Очищаем линии в системе сразу, но сохраняем визуальное представление для анимации
+  void _clearLinesInSystem(List<int> rows, List<int> cols) {
+    // Очищаем заполненные строки в копии доски
+    List<List<Cell>> boardCopy = List.generate(
+      boardSize,
+      (i) => List.generate(
+        boardSize,
+        (j) => Cell()..isFilled = board[i][j].isFilled..color = board[i][j].color,
+      ),
+    );
+    
+    // Очищаем заполненные строки в копии
+    for (int row in rows) {
+      for (int j = 0; j < boardSize; j++) {
+        boardCopy[row][j].isFilled = false;
+        boardCopy[row][j].color = Colors.transparent;
+      }
+    }
+    
+    // Очищаем заполненные столбцы в копии
+    for (int col in cols) {
+      for (int i = 0; i < boardSize; i++) {
+        boardCopy[i][col].isFilled = false;
+        boardCopy[i][col].color = Colors.transparent;
+      }
+    }
+    
+    // Обновляем внутреннюю игровую логику с очищенной доской
+    // но визуально доска пока остается с заполненными линиями для анимации
+    setState(() {
+      board = boardCopy;
+    });
+  }
+  
+  // Рассчитываем и применяем очки с учетом комбо
+  void _calculateAndApplyScore(int clearedLines) {
+    // Базовые очки за линию
+    int basePoints = 10;
+    int totalPoints = basePoints * clearedLines;
+    
+    // Проверяем, увеличился ли счетчик комбо
+    if (lastLinesClearedCount > 0) {
+      // Увеличиваем комбо, если в предыдущем ходу тоже были собраны линии
+      comboCount++;
+    } else {
+      // Сбрасываем комбо, если в предыдущем ходу не было собранных линий
+      comboCount = 1; // Первое комбо
+    }
+    
+    // Бонус за несколько линий сразу
+    if (clearedLines >= 2) {
+      totalPoints = (totalPoints * 1.5).toInt(); // Бонус за 2+ линии
+    }
+    if (clearedLines >= 3) {
+      totalPoints = (totalPoints * 1.5).toInt(); // Дополнительный бонус за 3+ линий
+    }
+    
+    // Бонус за комбо (последовательные ходы с собранными линиями)
+    int comboBonus = 0;
+    if (comboCount > 1) {
+      comboBonus = totalPoints ~/ 2 * (comboCount - 1); // 50% бонус за каждый ход в комбо после первого
+      totalPoints += comboBonus;
+    }
+    
+    // Сохраняем количество собранных линий для следующего хода
+    lastLinesClearedCount = clearedLines;
+    
+    // Обновляем счет и бонус для отображения
+    setState(() {
+      score += totalPoints;
+      bonusPoints = totalPoints;
+      showComboAnimation = clearedLines >= 2 || comboCount > 1;
+    });
+    
+    // Сохраняем высокий счет
+    _saveHighScore();
+  }
+  
+  // Анимация исчезновения заполненных линий
+  void _animateLineClearing(List<int> rows, List<int> cols) {
+    // Начинаем с полной непрозрачности
+    double opacity = 1.0;
+    
+    // Создаем анимацию мигания для привлечения внимания
+    void animateFlash() {
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (!mounted) return;
+        
+        setState(() {
+          lineOpacity = opacity;
+        });
+        
+        opacity -= 0.1;
+        
+        if (opacity > 0) {
+          animateFlash();
+        } else {
+          // Когда анимация завершена, визуально очищаем линии
+          _finishLineAnimation(rows, cols);
+        }
+      });
+    }
+    
+    // Запускаем анимацию
+    animateFlash();
+    
+    // Скрываем анимацию комбо через 1.5 секунды
+    if (showComboAnimation) {
+      Future.delayed(const Duration(milliseconds: 1500), () {
+        if (mounted) {
+          setState(() {
+            showComboAnimation = false;
+          });
+        }
+      });
+    }
+  }
+  
+  // Завершаем анимацию линий и сбрасываем флаги
+  void _finishLineAnimation(List<int> rows, List<int> cols) {
+    setState(() {
+      isAnimatingLines = false;
+      animatingRows = [];
+      animatingCols = [];
+    });
   }
   
   // Проверяем, можно ли продолжить игру
   bool _canContinueGame() {
+    // Если нет доступных блоков, но будут сгенерированы новые, игра может продолжаться
+    if (availableBlocks.isEmpty) {
+      return true;
+    }
+    
     // Проверяем, что хотя бы один из доступных блоков можно разместить на доске
     for (Block block in availableBlocks) {
       for (int i = 0; i < boardSize; i++) {
@@ -700,113 +875,177 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
   Widget _buildGameBoard(bool isDarkMode, Color surfaceColor, Color primaryColor, double cellSize) {
     return Padding(
       padding: const EdgeInsets.all(16.0),
-      child: Container(
-        key: _boardKey, // Добавляем ключ для доступа к размерам
-        decoration: BoxDecoration(
-          color: isDarkMode ? Colors.grey[850] : Colors.grey[100],
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(16),
-          child: Stack(
-            children: [
-              // Базовая сетка
-              GridView.builder(
-                padding: EdgeInsets.zero,
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: boardSize,
-                  childAspectRatio: 1.0, // Важно для корректных квадратных ячеек
+      child: Stack(
+        children: [
+          Container(
+            key: _boardKey, // Добавляем ключ для доступа к размерам
+            decoration: BoxDecoration(
+              color: isDarkMode 
+                  ? Colors.grey[850]!.withOpacity(0.5) 
+                  : Colors.grey[100]!.withOpacity(0.5),
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.1),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
                 ),
-                itemCount: boardSize * boardSize,
-                itemBuilder: (context, index) {
-                  final int row = index ~/ boardSize;
-                  final int col = index % boardSize;
-                  return _buildCell(row, col, isDarkMode);
-                },
-              ),
-              
-              // Превью размещения блока
-              if (isDragging && draggedBlock != null)
-                Positioned.fill(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      // Используем точный размер ячейки на основе размера контейнера
-                      final double actualCellSize = constraints.maxWidth / boardSize;
-                      
-                      return DragTarget<Block>(
-                        // Будем принимать блок при любом событии перетаскивания
-                        onWillAccept: (block) => block != null,
-                        onWillAcceptWithDetails: (details) {
-                          final Block block = details.data;
-                          // Только обновляем превью, не принимаем/отклоняем блок
-                          _updatePreview(block, details.offset);
-                          // Всегда возвращаем true, чтобы DragTarget отслеживал событие
-                          return true;
-                        },
-                        onAcceptWithDetails: (details) {
-                          final Block block = details.data;
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: Stack(
+                children: [
+                  // Базовая сетка
+                  GridView.builder(
+                    padding: EdgeInsets.zero,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: boardSize,
+                      childAspectRatio: 1.0, // Важно для корректных квадратных ячеек
+                    ),
+                    itemCount: boardSize * boardSize,
+                    itemBuilder: (context, index) {
+                      final int row = index ~/ boardSize;
+                      final int col = index % boardSize;
+                      return _buildCell(row, col, isDarkMode);
+                    },
+                  ),
+                  
+                  // Превью размещения блока
+                  if (isDragging && draggedBlock != null)
+                    Positioned.fill(
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          // Используем точный размер ячейки на основе размера контейнера
+                          final double actualCellSize = constraints.maxWidth / boardSize;
                           
-                          // Размещаем блок только если есть корректная позиция и можно разместить
-                          if (previewRow >= 0 && previewCol >= 0 && 
-                              _canPlaceBlock(block, previewRow, previewCol)) {
-                            _placeBlock(block, previewRow, previewCol);
-                          }
-                          
-                          _resetPreview();
-                        },
-                        onLeave: (_) {
-                          // Не сбрасываем превью сразу при покидании области
-                        },
-                        builder: (context, candidateData, rejectedData) {
-                          return Listener(
-                            behavior: HitTestBehavior.opaque,
-                            onPointerMove: (event) {
-                              if (draggedBlock != null) {
-                                _updatePreview(draggedBlock!, event.position);
-                              }
+                          return DragTarget<Block>(
+                            // Будем принимать блок при любом событии перетаскивания
+                            onWillAcceptWithDetails: (details) {
+                              final Block block = details.data;
+                              // Только обновляем превью, не принимаем/отклоняем блок
+                              _updatePreview(block, details.offset);
+                              // Всегда возвращаем true, чтобы DragTarget отслеживал событие
+                              return true;
                             },
-                            onPointerUp: (event) {
-                              // Дополнительная проверка при отпускании указателя
-                              if (draggedBlock != null && previewRow >= 0 && previewCol >= 0 && 
-                                  _canPlaceBlock(draggedBlock!, previewRow, previewCol)) {
-                                _placeBlock(draggedBlock!, previewRow, previewCol);
+                            onAcceptWithDetails: (details) {
+                              final Block block = details.data;
+                              
+                              // Размещаем блок только если есть корректная позиция и можно разместить
+                              if (previewRow >= 0 && previewCol >= 0 && 
+                                  _canPlaceBlock(block, previewRow, previewCol)) {
+                                _placeBlock(block, previewRow, previewCol);
                               }
+                              
                               _resetPreview();
                             },
-                            child: AnimatedBuilder(
-                              animation: _pulseAnimation,
-                              builder: (context, child) {
-                                return CustomPaint(
-                                  size: Size(constraints.maxWidth, constraints.maxWidth), // Квадратная доска
-                                  painter: BlockPreviewPainter(
-                                    block: draggedBlock!,
-                                    row: previewRow,
-                                    col: previewCol,
-                                    boardSize: boardSize,
-                                    cellSize: actualCellSize,
-                                    color: primaryColor.withOpacity(_pulseAnimation.value),
-                                    isValid: _canPlaceBlock(draggedBlock!, previewRow, previewCol),
-                                  ),
-                                );
-                              }
-                            ),
+                            onLeave: (_) {
+                              // Не сбрасываем превью сразу при покидании области
+                            },
+                            builder: (context, candidateData, rejectedData) {
+                              return Listener(
+                                behavior: HitTestBehavior.opaque,
+                                onPointerMove: (event) {
+                                  if (draggedBlock != null) {
+                                    _updatePreview(draggedBlock!, event.position);
+                                  }
+                                },
+                                onPointerUp: (event) {
+                                  // Дополнительная проверка при отпускании указателя
+                                  if (draggedBlock != null && previewRow >= 0 && previewCol >= 0 && 
+                                      _canPlaceBlock(draggedBlock!, previewRow, previewCol)) {
+                                    _placeBlock(draggedBlock!, previewRow, previewCol);
+                                  }
+                                  _resetPreview();
+                                },
+                                child: AnimatedBuilder(
+                                  animation: _pulseAnimation,
+                                  builder: (context, child) {
+                                    return CustomPaint(
+                                      size: Size(constraints.maxWidth, constraints.maxWidth), // Квадратная доска
+                                      painter: BlockPreviewPainter(
+                                        block: draggedBlock!,
+                                        row: previewRow,
+                                        col: previewCol,
+                                        boardSize: boardSize,
+                                        cellSize: actualCellSize,
+                                        color: primaryColor.withOpacity(_pulseAnimation.value),
+                                        isValid: _canPlaceBlock(draggedBlock!, previewRow, previewCol),
+                                      ),
+                                    );
+                                  }
+                                ),
+                              );
+                            },
                           );
-                        },
-                      );
-                    }
-                  ),
-                ),
-            ],
+                        }
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ),
-        ),
+          
+          // Анимация комбо и бонусных очков
+          if (showComboAnimation)
+            Positioned(
+              top: 10,
+              right: 10,
+              child: TweenAnimationBuilder<double>(
+                tween: Tween<double>(begin: 0.0, end: 1.0),
+                duration: const Duration(milliseconds: 400),
+                builder: (context, value, child) {
+                  return Opacity(
+                    opacity: value > 0.8 ? (1.0 - (value - 0.8) * 5) : value * 1.25, // Появление и исчезновение
+                    child: Transform.scale(
+                      scale: 0.8 + value * 0.4, // Анимация увеличения
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: comboCount > 1 
+                              ? Colors.orange.withOpacity(0.8) 
+                              : Colors.green.withOpacity(0.8),
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.3),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              comboCount > 1 
+                                  ? 'КОМБО x$comboCount!' 
+                                  : (lastLinesClearedCount > 1 ? 'БОНУС!' : '+$bonusPoints'),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                            if (comboCount > 1 || lastLinesClearedCount > 1)
+                              Text(
+                                '+$bonusPoints',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 20,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -814,18 +1053,56 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
   // Строим ячейку доски
   Widget _buildCell(int row, int col, bool isDarkMode) {
     final cell = board[row][col];
+    final bool isAnimating = animatingRows.contains(row) || animatingCols.contains(col);
+    final bool isHighlighted = highlightRows.contains(row) || highlightCols.contains(col);
     
-    return Container(
-      margin: EdgeInsets.all(1),
-      decoration: BoxDecoration(
-        color: cell.isFilled 
-            ? cell.color // Убираем прозрачность, чтобы не мигали
-            : isDarkMode ? Colors.grey[900] : Colors.white,
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(
-          color: isDarkMode ? Colors.grey[800]! : Colors.grey[300]!,
-          width: 1,
+    return AnimatedOpacity(
+      opacity: isAnimating ? lineOpacity : 1.0,
+      duration: const Duration(milliseconds: 50),
+      child: Container(
+        margin: EdgeInsets.all(1),
+        decoration: BoxDecoration(
+          color: cell.isFilled 
+              ? isAnimating 
+                ? cell.color.withOpacity(lineOpacity * 0.8)
+                : cell.color.withOpacity(0.8) 
+              : isHighlighted
+                ? (isDarkMode ? Colors.amber.withOpacity(0.25) : Colors.amber.withOpacity(0.15))
+                : isDarkMode 
+                    ? Colors.grey[900]!.withOpacity(0.6) 
+                    : Colors.white.withOpacity(0.6),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(
+            color: isHighlighted
+                ? Colors.amber
+                : isDarkMode ? Colors.grey[800]! : Colors.grey[300]!,
+            width: isHighlighted ? 1.5 : 1,
+          ),
         ),
+        child: isAnimating && cell.isFilled
+            ? Center(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 100),
+                  width: 10 * lineOpacity,
+                  height: 10 * lineOpacity,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              )
+            : isHighlighted && !cell.isFilled
+              ? Center(
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withOpacity(0.6),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                )
+              : null,
       ),
     );
   }
@@ -839,9 +1116,11 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
   // Строим селектор блоков
   Widget _buildBlockSelector(bool isDarkMode, Color surfaceColor, Color primaryColor) {
     return Container(
-      padding: const EdgeInsets.all(12.0),
+      padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 12.0),
       decoration: BoxDecoration(
-        color: isDarkMode ? Colors.grey[900] : Colors.white,
+        color: isDarkMode 
+            ? Colors.grey[900]!.withOpacity(0.7) 
+            : Colors.white.withOpacity(0.7),
         borderRadius: const BorderRadius.only(
           topLeft: Radius.circular(24),
           topRight: Radius.circular(24),
@@ -854,91 +1133,76 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
           ),
         ],
       ),
-      child: Column(
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          Text(
-            'Доступные блоки',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
-            ),
-          ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                for (int i = 0; i < availableBlocks.length; i++)
-                  Draggable<Block>(
-                    maxSimultaneousDrags: 1, // Разрешаем только одно перетаскивание за раз
-                    dragAnchorStrategy: (draggable, context, position) {
-                      // Возвращаем центр виджета для лучшего позиционирования
-                      final RenderBox renderObject = context.findRenderObject() as RenderBox;
-                      return Offset(renderObject.size.width / 2, renderObject.size.height / 2);
-                    },
-                    data: availableBlocks[i],
-                    feedback: _buildBlockFeedback(availableBlocks[i], isDarkMode, primaryColor),
-                    childWhenDragging: Container(
-                      width: 80,
-                      height: 80,
-                      decoration: BoxDecoration(
-                        color: isDarkMode ? Colors.grey[800] : Colors.grey[100],
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: isDarkMode ? Colors.grey[700]! : Colors.grey[300]!,
-                          width: 2,
-                          style: BorderStyle.solid,
-                        ),
-                      ),
-                    ),
-                    onDragStarted: () {
-                      setState(() {
-                        selectedBlock = availableBlocks[i];
-                        selectedBlockIndex = i;
-                        isDragging = true;
-                        draggedBlock = availableBlocks[i];
-                        
-                        // Сбрасываем позицию предпросмотра
-                        previewRow = -1;
-                        previewCol = -1;
-                      });
-                    },
-                    onDragUpdate: (details) {
-                      // Обновляем превью при каждом изменении положения
-                      if (draggedBlock != null) {
-                        _updatePreview(draggedBlock!, details.globalPosition);
-                      }
-                    },
-                    onDraggableCanceled: (_, __) {
-                      setState(() {
-                        _resetPreview();
-                      });
-                    },
-                    onDragEnd: (details) {
-                      // Проверяем, был ли блок размещен, если нет - сбрасываем превью
-                      if (details.wasAccepted == false && draggedBlock != null && 
-                          previewRow >= 0 && previewCol >= 0 && 
-                          _canPlaceBlock(draggedBlock!, previewRow, previewCol)) {
-                        // Если перетаскивание закончилось, но блок можно разместить - размещаем его
-                        _placeBlock(draggedBlock!, previewRow, previewCol);
-                      }
-                      
-                      setState(() {
-                        _resetPreview();
-                      });
-                    },
-                    onDragCompleted: () {
-                      // Очищаем после успешного размещения
-                      setState(() {
-                        _resetPreview();
-                      });
-                    },
-                    child: _buildBlockPreview(availableBlocks[i], isDarkMode: isDarkMode),
+          for (int i = 0; i < availableBlocks.length; i++)
+            Draggable<Block>(
+              maxSimultaneousDrags: 1, // Разрешаем только одно перетаскивание за раз
+              dragAnchorStrategy: (draggable, context, position) {
+                // Возвращаем центр виджета для лучшего позиционирования
+                final RenderBox renderObject = context.findRenderObject() as RenderBox;
+                return Offset(renderObject.size.width / 2, renderObject.size.height / 2);
+              },
+              data: availableBlocks[i],
+              feedback: _buildBlockFeedback(availableBlocks[i], isDarkMode, primaryColor),
+              childWhenDragging: Container(
+                width: 100,
+                height: 100,
+                decoration: BoxDecoration(
+                  color: isDarkMode ? Colors.grey[800] : Colors.grey[100],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: isDarkMode ? Colors.grey[700]! : Colors.grey[300]!,
+                    width: 2,
+                    style: BorderStyle.solid,
                   ),
-              ],
+                ),
+              ),
+              onDragStarted: () {
+                setState(() {
+                  selectedBlock = availableBlocks[i];
+                  selectedBlockIndex = i;
+                  isDragging = true;
+                  draggedBlock = availableBlocks[i];
+                  
+                  // Сбрасываем позицию предпросмотра
+                  previewRow = -1;
+                  previewCol = -1;
+                });
+              },
+              onDragUpdate: (details) {
+                // Обновляем превью при каждом изменении положения
+                if (draggedBlock != null) {
+                  _updatePreview(draggedBlock!, details.globalPosition);
+                }
+              },
+              onDraggableCanceled: (_, __) {
+                setState(() {
+                  _resetPreview();
+                });
+              },
+              onDragEnd: (details) {
+                // Проверяем, был ли блок размещен, если нет - сбрасываем превью
+                if (details.wasAccepted == false && draggedBlock != null && 
+                    previewRow >= 0 && previewCol >= 0 && 
+                    _canPlaceBlock(draggedBlock!, previewRow, previewCol)) {
+                  // Если перетаскивание закончилось, но блок можно разместить - размещаем его
+                  _placeBlock(draggedBlock!, previewRow, previewCol);
+                }
+                
+                setState(() {
+                  _resetPreview();
+                });
+              },
+              onDragCompleted: () {
+                // Очищаем после успешного размещения
+                setState(() {
+                  _resetPreview();
+                });
+              },
+              child: _buildBlockPreview(availableBlocks[i], isDarkMode: isDarkMode),
             ),
-          ),
         ],
       ),
     );
@@ -980,14 +1244,16 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
   Widget _buildBlockPreview(Block block, {bool isPreview = false, required bool isDarkMode}) {
     final int rows = block.shape.length;
     final int cols = block.shape[0].length;
-    final double cellSize = isPreview ? 20.0 : 16.0;
+    final double cellSize = isPreview ? 24.0 : 20.0;
     
     return Container(
-      width: 80,
-      height: 80,
+      width: 100,
+      height: 100,
       padding: const EdgeInsets.all(8.0),
       decoration: BoxDecoration(
-        color: isDarkMode ? Colors.grey[850] : Colors.white,
+        color: isDarkMode 
+            ? Colors.grey[850]!.withOpacity(0.7) 
+            : Colors.white.withOpacity(0.7),
         borderRadius: BorderRadius.circular(12),
         boxShadow: isPreview
             ? [BoxShadow(color: Colors.black26, blurRadius: 8.0, spreadRadius: 2.0)]
@@ -1051,8 +1317,16 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
   // Завершаем игру
   void _gameOver() {
     _saveHighScore();
-    setState(() {
-      gameState = GameState.gameOver;
+    _markGameAsOver();
+    
+    // Добавляем задержку перед показом экрана окончания игры
+    // Это даст пользователю возможность увидеть последний ход
+    Future.delayed(const Duration(milliseconds: 1500), () {
+      if (mounted) {
+        setState(() {
+          gameState = GameState.gameOver;
+        });
+      }
     });
   }
 
@@ -1133,6 +1407,8 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
         previewRow = -1;
         previewCol = -1;
         isDragging = false;
+        highlightRows = [];
+        highlightCols = [];
       });
       return false;
     }
@@ -1155,6 +1431,9 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
     // Проверяем, можно ли разместить блок
     bool canPlace = _canPlaceBlock(block, adjustedRow, adjustedCol);
     
+    // Обновляем подсветку линий, которые будут заполнены после размещения блока
+    _updateHighlightLinesForBlock(block, adjustedRow, adjustedCol);
+    
     // Обновляем состояние только если позиция изменилась
     if (previewRow != adjustedRow || previewCol != adjustedCol || isDragging == false || draggedBlock != block) {
       setState(() {
@@ -1166,6 +1445,89 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
     }
     
     return canPlace;
+  }
+  
+  // Проверяем и обновляем подсветку линий, которые будут заполнены после размещения блока
+  void _updateHighlightLinesForBlock(Block block, int row, int col) {
+    // Сначала проверяем, можно ли разместить блок в указанной позиции
+    if (!_canPlaceBlock(block, row, col)) {
+      setState(() {
+        highlightRows = [];
+        highlightCols = [];
+      });
+      return;
+    }
+    
+    // Копируем текущее состояние доски для проверки
+    List<List<bool>> tempBoard = List.generate(
+      boardSize, 
+      (i) => List.generate(
+        boardSize, 
+        (j) => board[i][j].isFilled,
+      ),
+    );
+    
+    // Симулируем размещение блока на временной доске
+    for (int i = 0; i < block.shape.length; i++) {
+      for (int j = 0; j < block.shape[i].length; j++) {
+        if (block.shape[i][j]) {
+          int boardRow = row + i;
+          int boardCol = col + j;
+          
+          // Проверяем границы
+          if (boardRow >= 0 && boardRow < boardSize && boardCol >= 0 && boardCol < boardSize) {
+            tempBoard[boardRow][boardCol] = true;
+          }
+        }
+      }
+    }
+    
+    // Находим заполненные строки
+    List<int> newHighlightRows = [];
+    for (int i = 0; i < boardSize; i++) {
+      bool isRowFull = true;
+      for (int j = 0; j < boardSize; j++) {
+        if (!tempBoard[i][j]) {
+          isRowFull = false;
+          break;
+        }
+      }
+      if (isRowFull) {
+        newHighlightRows.add(i);
+      }
+    }
+    
+    // Находим заполненные столбцы
+    List<int> newHighlightCols = [];
+    for (int j = 0; j < boardSize; j++) {
+      bool isColFull = true;
+      for (int i = 0; i < boardSize; i++) {
+        if (!tempBoard[i][j]) {
+          isColFull = false;
+          break;
+        }
+      }
+      if (isColFull) {
+        newHighlightCols.add(j);
+      }
+    }
+    
+    // Обновляем состояние только если подсветка изменилась
+    if (!_listEquals(highlightRows, newHighlightRows) || !_listEquals(highlightCols, newHighlightCols)) {
+      setState(() {
+        highlightRows = newHighlightRows;
+        highlightCols = newHighlightCols;
+      });
+    }
+  }
+  
+  // Вспомогательная функция для сравнения списков
+  bool _listEquals(List<int> list1, List<int> list2) {
+    if (list1.length != list2.length) return false;
+    for (int i = 0; i < list1.length; i++) {
+      if (list1[i] != list2[i]) return false;
+    }
+    return true;
   }
 
   // Размещаем блок на игровой доске
@@ -1184,7 +1546,7 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
       // Размещаем блок на доске
       for (int i = 0; i < block.shape.length; i++) {
         for (int j = 0; j < block.shape[i].length; j++) {
-          if (block.shape[i][j] == 1) {
+          if (block.shape[i][j]) {
             int boardRow = row + i;
             int boardCol = col + j;
             
@@ -1208,8 +1570,12 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
         draggedBlock = null;
         isDragging = false;
         
-        // Обновляем счет
-        score += block.shape.expand((row) => row).where((cell) => cell == 1).length;
+        // Сбрасываем подсветку линий
+        highlightRows = [];
+        highlightCols = [];
+        
+        // Обновляем счет - считаем количество true ячеек в матрице формы блока
+        score += block.shape.expand((row) => row).where((cell) => cell).length;
         
         // Проверяем заполненные линии
         _checkLines();
@@ -1243,6 +1609,8 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
         previewCol = -1;
         isDragging = false;
         draggedBlock = null;
+        highlightRows = [];
+        highlightCols = [];
       });
     }
   }
@@ -1257,60 +1625,143 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
     final textColor = Theme.of(context).colorScheme.onSurface;
     
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('КолледжБлоки'),
-        elevation: 0,
-        // Добавляем кнопку назад в appBar для состояния игры
-        leading: gameState == GameState.playing 
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: () {
-                  setState(() {
-                    gameState = GameState.notStarted;
-                    _saveGameState();
-                  });
-                },
-                tooltip: 'Вернуться в меню',
-              )
-            : null,
-        actions: [
-          // Отображаем текущий счет и лучший результат
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: Center(
-              child: Text(
-                'Счет: $score | Рекорд: $highScore',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: textColor,
-                ),
-              ),
+      appBar: gameState == GameState.playing 
+      ? AppBar(
+          title: _buildScoreWidget(_isDarkMode, primaryColor), // Красивый виджет счёта
+          elevation: 0,
+          centerTitle: true,
+          // Добавляем кнопку назад для возврата в меню
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () {
+              setState(() {
+                gameState = GameState.notStarted;
+                _saveGameState();
+              });
+            },
+            tooltip: 'Вернуться в меню',
+          ),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: _restartGame,
+              tooltip: 'Новая игра',
             ),
+          ],
+        )
+      : AppBar(
+          title: const Text('Мини игра'),
+          elevation: 0,
+        ),
+      body: Stack(
+        children: [
+          // Анимированный фон на заднем плане
+          Positioned.fill(
+            child: IgnorePointer(
+              child: AnimatedBackgroundWidget(isDarkMode: _isDarkMode),
+            ),
+          ),
+          
+          // Основной контент поверх фона
+          LayoutBuilder(
+            builder: (context, constraints) {
+              // Сохраняем размеры доски для корректных расчетов
+              final boardWidth = constraints.maxWidth;
+              final boardHeight = constraints.maxHeight;
+              final cellSize = boardWidth / boardSize;
+              
+              return Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: _isDarkMode
+                        ? [Colors.black87.withOpacity(0.5), Colors.black54.withOpacity(0.5)]
+                        : [Colors.blue.shade50.withOpacity(0.5), Colors.white.withOpacity(0.5)],
+                  ),
+                ),
+                child: _buildGameContent(_isDarkMode, primaryColor, surfaceColor, textColor, cellSize),
+              );
+            }
           ),
         ],
       ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          // Сохраняем размеры доски для корректных расчетов
-          final boardWidth = constraints.maxWidth;
-          final boardHeight = constraints.maxHeight * 0.75; // 75% для игровой доски
-          final cellSize = boardWidth / boardSize;
-          
-          return Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: _isDarkMode
-                    ? [Colors.black87, Colors.black54]
-                    : [Colors.blue.shade50, Colors.white],
+    );
+  }
+  
+  // Красивый виджет для отображения счёта и рекорда
+  Widget _buildScoreWidget(bool isDarkMode, Color primaryColor) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: isDarkMode ? Colors.grey[800] : Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black26,
+                blurRadius: 4,
+                offset: Offset(0, 2),
               ),
-            ),
-            child: _buildGameContent(_isDarkMode, primaryColor, surfaceColor, textColor, cellSize),
-          );
-        }
-      ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.star,
+                color: Colors.amber,
+                size: 20,
+              ),
+              SizedBox(width: 4),
+              Text(
+                '$score',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: primaryColor,
+                ),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(width: 8),
+        Container(
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: isDarkMode ? Colors.grey[850] : Colors.grey[100],
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black26,
+                blurRadius: 4,
+                offset: Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.emoji_events,
+                color: Colors.orange,
+                size: 20,
+              ),
+              SizedBox(width: 4),
+              Text(
+                '$highScore',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: isDarkMode ? Colors.grey[400] : Colors.grey[700],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
   
@@ -1334,8 +1785,8 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: isDarkMode 
-              ? [Colors.grey[900]!, Colors.black]
-              : [Colors.blue[100]!, Colors.blue[50]!],
+              ? [Colors.grey[900]!.withOpacity(0.6), Colors.black.withOpacity(0.6)]
+              : [Colors.blue[100]!.withOpacity(0.6), Colors.blue[50]!.withOpacity(0.6)],
         ),
       ),
       child: Center(
@@ -1344,7 +1795,9 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(24),
           ),
-          color: isDarkMode ? Colors.grey[850] : Colors.white,
+          color: isDarkMode 
+              ? Colors.grey[850]!.withOpacity(0.8) 
+              : Colors.white.withOpacity(0.8),
           margin: const EdgeInsets.all(24),
           child: Padding(
             padding: const EdgeInsets.all(32.0),
@@ -1352,44 +1805,49 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
               mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
+                // Отображаем рекорд сверху
+                if (highScore > 0)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 24),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: primaryColor.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.emoji_events, color: primaryColor, size: 28),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Рекорд: $highScore',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: primaryColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                
+                // Новая иконка, более соответствующая игре
                 Icon(
-                  Icons.grid_4x4,
+                  Icons.app_registration, // Иконка, больше подходящая для игры
                   size: 80,
                   color: primaryColor,
                 ),
                 const SizedBox(height: 24),
-                Text(
-                  'КолледжБлоки',
-                  style: TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: textColor,
-                    letterSpacing: 1.2,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: isDarkMode ? Colors.grey[800] : Colors.blue[50],
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Text(
-                    'Размещайте блоки разных цветов и форм,\nзаполняйте строки и столбцы для получения очков!',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: textColor.withOpacity(0.9),
-                    ),
-                  ),
-                ),
+                
                 const SizedBox(height: 32),
 
-                // Добавляем проверку наличия сохраненной игры
-                FutureBuilder<bool>(
-                  future: _hasSavedGame(),
+                // Добавляем проверку наличия сохраненной игры и что она не завершена
+                FutureBuilder<Map<String, dynamic>>(
+                  future: _getGameStatus(),
                   builder: (context, snapshot) {
-                    final bool hasSavedGame = snapshot.data ?? false;
+                    final Map<String, dynamic> gameStatus = snapshot.data ?? {'hasSavedGame': false, 'isGameOver': false};
+                    final bool hasSavedGame = gameStatus['hasSavedGame'];
+                    final bool isGameOver = gameStatus['isGameOver'];
                     
                     return Column(
                       mainAxisSize: MainAxisSize.min,
@@ -1414,7 +1872,8 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
                           ),
                         ),
                         
-                        if (hasSavedGame) ...[
+                        // Показываем кнопку продолжить только если есть сохраненная игра и она не завершена
+                        if (hasSavedGame && !isGameOver) ...[
                           const SizedBox(height: 16),
                           OutlinedButton(
                             onPressed: _continueGame,
@@ -1440,31 +1899,6 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
                     );
                   },
                 ),
-
-                const SizedBox(height: 24),
-                if (highScore > 0)
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: primaryColor.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.emoji_events, color: primaryColor),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Ваш рекорд: $highScore',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: primaryColor,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
               ],
             ),
           ),
@@ -1477,14 +1911,14 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
   Widget _buildGameScreen(bool isDarkMode, Color surfaceColor, Color primaryColor, double cellSize) {
     return Column(
       children: [
-        // Игровая доска
+        // Игровая доска занимает большую часть экрана
         Expanded(
-          flex: 3,
+          flex: 5,
           child: _buildGameBoard(isDarkMode, surfaceColor, primaryColor, cellSize),
         ),
-        // Доступные блоки
-        Expanded(
-          flex: 1,
+        // Селектор блоков занимает меньшую часть
+        SizedBox(
+          height: 120, // Увеличиваем высоту для селектора блоков
           child: _buildBlockSelector(isDarkMode, surfaceColor, primaryColor),
         ),
       ],
@@ -1499,6 +1933,9 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
         ),
+        color: isDarkMode 
+            ? Colors.grey[850]!.withOpacity(0.8) 
+            : Colors.white.withOpacity(0.8),
         margin: const EdgeInsets.all(24),
         child: Padding(
           padding: const EdgeInsets.all(24.0),
@@ -1542,6 +1979,8 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
                 children: [
                   OutlinedButton(
                     onPressed: () {
+                      // При возврате в меню после проигрыша сохраняем состояние как проигранное
+                      _markGameAsOver();
                       setState(() {
                         gameState = GameState.notStarted;
                       });
@@ -1586,6 +2025,274 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
       ),
     );
   }
+
+  // Добавляем метод для маркировки игры как проигранной
+  Future<void> _markGameAsOver() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedStateJson = prefs.getString('minigame_saved_state');
+    if (savedStateJson != null) {
+      try {
+        final gameStateMap = jsonDecode(savedStateJson) as Map<String, dynamic>;
+        gameStateMap['isGameOver'] = true;
+        await prefs.setString('minigame_saved_state', jsonEncode(gameStateMap));
+      } catch (e) {
+        // Игнорируем ошибки
+      }
+    }
+  }
+
+  // Получаем статус игры (сохранена ли и не закончена ли)
+  Future<Map<String, dynamic>> _getGameStatus() async {
+    final prefs = await SharedPreferences.getInstance();
+    
+    // Пытаемся загрузить сохраненное состояние
+    final savedStateJson = prefs.getString('minigame_saved_state');
+    if (savedStateJson == null) {
+      return {'hasSavedGame': false, 'isGameOver': false};
+    }
+    
+    try {
+      final gameStateMap = jsonDecode(savedStateJson) as Map<String, dynamic>;
+      final savedGameState = gameStateMap['gameState'] ?? 0;
+      final isGameOver = gameStateMap['isGameOver'] ?? false;
+      
+      return {
+        'hasSavedGame': GameState.values[savedGameState] == GameState.playing,
+        'isGameOver': isGameOver || GameState.values[savedGameState] == GameState.gameOver,
+      };
+    } catch (e) {
+      return {'hasSavedGame': false, 'isGameOver': false};
+    }
+  }
+}
+
+// Класс для анимированного фона
+class AnimatedBackgroundWidget extends StatefulWidget {
+  final bool isDarkMode;
+  
+  const AnimatedBackgroundWidget({
+    Key? key,
+    required this.isDarkMode,
+  }) : super(key: key);
+
+  @override
+  State<AnimatedBackgroundWidget> createState() => _AnimatedBackgroundWidgetState();
+}
+
+class _AnimatedBackgroundWidgetState extends State<AnimatedBackgroundWidget> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late List<BackgroundParticle> particles;
+  final int particleCount = 40; // Увеличиваем количество частиц для большей хаотичности
+  
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 60), // Увеличиваем продолжительность для более плавного движения
+    )..repeat();
+    
+    // Создаем частицы с разными временными параметрами
+    particles = List.generate(particleCount, (_) => BackgroundParticle.random());
+  }
+  
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return RepaintBoundary(
+          child: CustomPaint(
+            painter: BackgroundPainter(
+              particles: particles,
+              animationValue: _controller.value,
+              isDarkMode: widget.isDarkMode,
+            ),
+            size: Size.infinite,
+          ),
+        );
+      },
+    );
+  }
+}
+
+// Класс для частицы фона
+class BackgroundParticle {
+  Offset startPosition;
+  Offset endPosition;
+  final double size;
+  final Color color;
+  final double speed;
+  final double opacity;
+  double startTime; // Начальное время для плавной анимации
+  double direction; // Направление движения (для внесения хаотичности)
+  
+  BackgroundParticle({
+    required this.startPosition,
+    required this.endPosition,
+    required this.size,
+    required this.color,
+    required this.speed,
+    required this.opacity,
+    required this.startTime,
+    required this.direction,
+  });
+  
+  factory BackgroundParticle.random() {
+    final random = Random();
+    
+    return BackgroundParticle(
+      startPosition: Offset(
+        random.nextDouble() * 1.2 - 0.1, // Может начинаться немного за экраном
+        random.nextDouble() * 1.2 - 0.1,
+      ),
+      endPosition: Offset(
+        random.nextDouble() * 1.2 - 0.1,
+        random.nextDouble() * 1.2 - 0.1,
+      ),
+      size: random.nextDouble() * 20 + 10, // От 10 до 30
+      color: HSLColor.fromAHSL(
+        0.7, // Увеличиваем непрозрачность
+        random.nextDouble() * 360, // Случайный оттенок
+        0.7, // Насыщенность
+        0.7, // Яркость
+      ).toColor(),
+      speed: random.nextDouble() * 0.3 + 0.02, // От 0.02 до 0.32 - более плавное движение
+      opacity: random.nextDouble() * 0.3 + 0.1, // Случайная прозрачность
+      startTime: random.nextDouble(), // Случайное начальное время для эффекта разнообразия
+      direction: random.nextDouble() * math.pi * 2, // Случайное направление в радианах
+    );
+  }
+  
+  Offset getPosition(double animationValue) {
+    // Изменяем позицию с учетом скорости и начального времени
+    final adjustedValue = ((animationValue + startTime) * speed) % 1.0;
+    
+    // Добавляем синусоидальное движение в направлении direction для хаотичности
+    final chaosValue = math.sin(adjustedValue * math.pi * 4) * 0.05;
+    final chaosOffset = Offset(
+      math.cos(direction) * chaosValue,
+      math.sin(direction) * chaosValue
+    );
+    
+    // Используем синусоидальный переход для более плавного движения
+    final transition = (math.sin((adjustedValue * math.pi - math.pi / 2)) + 1) / 2;
+    
+    // Основная позиция с добавлением хаотичности
+    final basePosition = Offset.lerp(startPosition, endPosition, transition)!;
+    
+    // Если почти завершили цикл, генерируем новую конечную точку, но сохраняем текущую как начальную
+    if (adjustedValue > 0.8) {
+      final random = Random();
+      final fadeOutFactor = (1.0 - (adjustedValue - 0.8) * 5); // Фактор затухания от 1.0 до 0.0
+      
+      // Если полностью завершили цикл, обновляем параметры
+      if (adjustedValue > 0.99) {
+        startPosition = endPosition;
+        endPosition = Offset(
+          random.nextDouble() * 1.2 - 0.1,
+          random.nextDouble() * 1.2 - 0.1,
+        );
+        startTime = (animationValue + 0.02) % 1.0; // Небольшой сдвиг для плавного перехода
+        direction = random.nextDouble() * math.pi * 2; // Обновляем направление для большей хаотичности
+      }
+      
+      // Возвращаем позицию с учетом затухания
+      return basePosition + chaosOffset * fadeOutFactor;
+    }
+    
+    return basePosition + chaosOffset;
+  }
+  
+  // Получаем текущую прозрачность в зависимости от анимации
+  double getCurrentOpacity(double animationValue) {
+    final cyclePosition = ((animationValue + startTime) * speed) % 1.0;
+    
+    // Плавно изменяем прозрачность
+    if (cyclePosition < 0.02) {
+      // Плавное появление в начале траектории (первые 2%)
+      return opacity * (cyclePosition * 50); // 0.02 * 50 = 1.0
+    } else if (cyclePosition > 0.8) {
+      // Плавное затухание в конце траектории (после 80%)
+      return opacity * (1.0 - (cyclePosition - 0.8) * 5); // 0.2 * 5 = 1.0
+    } else {
+      // Нормальная прозрачность в середине траектории
+      return opacity;
+    }
+  }
+}
+
+// Художник для анимированного фона
+class BackgroundPainter extends CustomPainter {
+  final List<BackgroundParticle> particles;
+  final double animationValue;
+  final bool isDarkMode;
+  
+  BackgroundPainter({
+    required this.particles,
+    required this.animationValue,
+    required this.isDarkMode,
+  });
+  
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final particle in particles) {
+      final position = particle.getPosition(animationValue);
+      final currentOpacity = particle.getCurrentOpacity(animationValue);
+      
+      // Преобразуем нормализованную позицию в пиксели
+      final pixelPosition = Offset(
+        position.dx * size.width,
+        position.dy * size.height,
+      );
+      
+      // Рисуем частицу как градиентный круг с мягкими краями
+      final paint = Paint()
+        ..shader = RadialGradient(
+          colors: [
+            particle.color.withOpacity(currentOpacity),
+            particle.color.withOpacity(0.0),
+          ],
+          stops: [0.3, 1.0], // Добавляем остановки для более резкого градиента
+        ).createShader(Rect.fromCircle(
+          center: pixelPosition,
+          radius: particle.size,
+        ));
+      
+      canvas.drawCircle(
+        pixelPosition,
+        particle.size,
+        paint,
+      );
+      
+      // Рисуем блики для более привлекательного эффекта
+      if (particle.size > 15) {
+        final blickPaint = Paint()
+          ..color = Colors.white.withOpacity(currentOpacity * 0.4)
+          ..style = PaintingStyle.fill;
+        
+        canvas.drawCircle(
+          Offset(
+            pixelPosition.dx - particle.size * 0.2,
+            pixelPosition.dy - particle.size * 0.2,
+          ),
+          particle.size * 0.3,
+          blickPaint,
+        );
+      }
+    }
+  }
+  
+  @override
+  bool shouldRepaint(covariant BackgroundPainter oldDelegate) {
+    return oldDelegate.animationValue != animationValue;
+  }
 }
 
 // Пейнтер для отображения превью расположения блока на доске
@@ -1613,19 +2320,22 @@ class BlockPreviewPainter extends CustomPainter {
     // Не рисуем если не находимся на доске или нет допустимой позиции
     if (row < 0 || col < 0) return;
 
+    // Рисуем только если можно разместить блок
+    if (!isValid) return;
+
     final Paint borderPaint = Paint()
-      ..color = isValid ? Colors.green.withOpacity(0.8) : Colors.red.withOpacity(0.8)
+      ..color = Colors.green.withOpacity(0.9)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0;
+      ..strokeWidth = 3.0;
 
     final Paint fillPaint = Paint()
-      ..color = isValid ? Colors.green.withOpacity(0.3) : Colors.red.withOpacity(0.3)
+      ..color = Colors.green.withOpacity(0.5)
       ..style = PaintingStyle.fill;
 
     // Проходимся по всем ячейкам блока
     for (int i = 0; i < block.shape.length; i++) {
       for (int j = 0; j < block.shape[i].length; j++) {
-        if (block.shape[i][j] == 1) {
+        if (block.shape[i][j]) {
           final int boardRow = row + i;
           final int boardCol = col + j;
           
@@ -1648,6 +2358,20 @@ class BlockPreviewPainter extends CustomPainter {
               cellSize,
             );
             canvas.drawRect(borderRect, borderPaint);
+            
+            // Добавляем внутренний маркер для лучшей видимости
+            final Rect innerRect = Rect.fromLTWH(
+              boardCol * cellSize + cellSize * 0.25,
+              boardRow * cellSize + cellSize * 0.25,
+              cellSize * 0.5,
+              cellSize * 0.5,
+            );
+            canvas.drawRect(
+              innerRect, 
+              Paint()
+                ..color = Colors.green.withOpacity(0.8)
+                ..style = PaintingStyle.fill
+            );
           }
         }
       }
