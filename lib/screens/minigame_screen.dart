@@ -610,20 +610,31 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
   
   // Проверяем, можно ли разместить блок на доске и обновляем предпросмотр
   bool _updatePreview(Block block, Offset position) {
-    final RenderBox box = context.findRenderObject() as RenderBox;
-    if (!box.hasSize) return false;
+    final RenderBox? box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return false;
     
     final localPosition = box.globalToLocal(position);
-    final double cellSize = box.size.width / boardSize;
+    final boardWidth = box.size.width;
+    final boardHeight = box.size.height;
+    final double cellSize = min(boardWidth, boardHeight) / boardSize;
+    
+    // Определяем начало игрового поля с учетом паддинга
+    final double boardStartX = 16.0; // Соответствует паддингу в _buildGameBoard
+    final double boardStartY = 16.0;
+    
+    // Корректируем локальную позицию с учетом начала доски
+    final adjustedX = localPosition.dx - boardStartX;
+    final adjustedY = localPosition.dy - boardStartY;
     
     // Определяем центр блока относительно курсора
     final int blockCenterRow = block.shape.length ~/ 2;
     final int blockCenterCol = block.shape[0].length ~/ 2;
     
-    // Вычисляем верхний левый угол, смещая от курсора на половину размера блока
-    final int row = (localPosition.dy / cellSize).floor() - blockCenterRow;
-    final int col = (localPosition.dx / cellSize).floor() - blockCenterCol;
+    // Вычисляем позицию с учетом центрирования блока
+    final int col = (adjustedX / cellSize).floor() - blockCenterCol;
+    final int row = (adjustedY / cellSize).floor() - blockCenterRow;
     
+    // Проверяем возможность размещения
     bool canPlace = _canPlaceBlock(block, row, col);
     
     setState(() {
@@ -780,7 +791,42 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
         // Игровая доска
         Expanded(
           flex: 3,
-          child: _buildGameBoard(isDarkMode, surfaceColor, primaryColor, cellSize),
+          child: Stack(
+            children: [
+              _buildGameBoard(isDarkMode, surfaceColor, primaryColor, cellSize),
+              // Кнопка "Назад" в верхнем левом углу
+              Positioned(
+                top: 16,
+                left: 16,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: isDarkMode ? Colors.grey[800] : Colors.white,
+                    borderRadius: BorderRadius.circular(30),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.2),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      )
+                    ],
+                  ),
+                  child: IconButton(
+                    icon: Icon(
+                      Icons.arrow_back,
+                      color: primaryColor,
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        gameState = GameState.notStarted;
+                        _saveGameState();
+                      });
+                    },
+                    tooltip: 'Вернуться в меню',
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
         // Доступные блоки
         Expanded(
@@ -1208,12 +1254,20 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
   
   // Размещаем блок на доске
   void _placeBlock(Block block, int row, int col) {
+    // Проверяем возможность размещения еще раз перед фактическим размещением
+    if (!_canPlaceBlock(block, row, col)) {
+      // Если не можем разместить, просто выходим
+      return;
+    }
+    
     // Размещаем блок
     for (int i = 0; i < block.shape.length; i++) {
       for (int j = 0; j < block.shape[i].length; j++) {
         if (block.shape[i][j]) {
-          board[row + i][col + j].isFilled = true;
-          board[row + i][col + j].color = block.color;
+          if (row + i >= 0 && row + i < boardSize && col + j >= 0 && col + j < boardSize) {
+            board[row + i][col + j].isFilled = true;
+            board[row + i][col + j].color = block.color;
+          }
         }
       }
     }
@@ -1227,8 +1281,10 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
     
     // Удаляем использованный блок
     setState(() {
-      availableBlocks.removeAt(selectedBlockIndex);
-      placedBlocksCount++;
+      if (selectedBlockIndex >= 0 && selectedBlockIndex < availableBlocks.length) {
+        availableBlocks.removeAt(selectedBlockIndex);
+        placedBlocksCount++;
+      }
       selectedBlock = null;
       selectedBlockIndex = -1;
       
