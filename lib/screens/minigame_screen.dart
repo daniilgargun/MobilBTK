@@ -125,6 +125,9 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
   int previewCol = -1;
   Block? draggedBlock;
   
+  // Добавляем GlobalKey для получения размеров игрового поля
+  final GlobalKey _boardKey = GlobalKey();
+  
   @override
   void initState() {
     super.initState();
@@ -608,336 +611,12 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
     return false;
   }
   
-  // Проверяем, можно ли разместить блок на доске и обновляем предпросмотр
-  bool _updatePreview(Block block, Offset position) {
-    final RenderBox? box = context.findRenderObject() as RenderBox?;
-    if (box == null || !box.hasSize) return false;
-    
-    final localPosition = box.globalToLocal(position);
-    final boardWidth = box.size.width;
-    final boardHeight = box.size.height;
-    final double cellSize = min(boardWidth, boardHeight) / boardSize;
-    
-    // Определяем начало игрового поля с учетом паддинга
-    final double boardStartX = 16.0; // Соответствует паддингу в _buildGameBoard
-    final double boardStartY = 16.0;
-    
-    // Корректируем локальную позицию с учетом начала доски
-    final adjustedX = localPosition.dx - boardStartX;
-    final adjustedY = localPosition.dy - boardStartY;
-    
-    // Определяем центр блока относительно курсора
-    final int blockCenterRow = block.shape.length ~/ 2;
-    final int blockCenterCol = block.shape[0].length ~/ 2;
-    
-    // Вычисляем позицию с учетом центрирования блока
-    final int col = (adjustedX / cellSize).floor() - blockCenterCol;
-    final int row = (adjustedY / cellSize).floor() - blockCenterRow;
-    
-    // Проверяем возможность размещения
-    bool canPlace = _canPlaceBlock(block, row, col);
-    
-    setState(() {
-      previewRow = row;
-      previewCol = col;
-    });
-    
-    return canPlace;
-  }
-  
-  // Сбрасываем превью
-  void _resetPreview() {
-    setState(() {
-      previewRow = -1;
-      previewCol = -1;
-      isDragging = false;
-      draggedBlock = null;
-    });
-  }
-  
-  @override
-  Widget build(BuildContext context) {
-    // Обновляем флаг темы при каждой перерисовке
-    _isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    
-    final primaryColor = Theme.of(context).colorScheme.primary;
-    final surfaceColor = Theme.of(context).colorScheme.surface;
-    final textColor = Theme.of(context).colorScheme.onSurface;
-    
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('КолледжБлоки'),
-        elevation: 0,
-        actions: [
-          // Отображаем текущий счет и лучший результат
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: Center(
-              child: Text(
-                'Счет: $score | Рекорд: $highScore',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: textColor,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          // Сохраняем размеры доски для корректных расчетов
-          final boardWidth = constraints.maxWidth;
-          final boardHeight = constraints.maxHeight * 0.75; // 75% для игровой доски
-          final cellSize = boardWidth / boardSize;
-          
-          return Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: _isDarkMode
-                    ? [Colors.black87, Colors.black54]
-                    : [Colors.blue.shade50, Colors.white],
-              ),
-            ),
-            child: _buildGameContent(_isDarkMode, primaryColor, surfaceColor, textColor, cellSize),
-          );
-        }
-      ),
-    );
-  }
-  
-  // Строим содержимое игры в зависимости от состояния
-  Widget _buildGameContent(bool isDarkMode, Color primaryColor, Color surfaceColor, Color textColor, double cellSize) {
-    switch (gameState) {
-      case GameState.notStarted:
-        return _buildStartScreen(isDarkMode, primaryColor, textColor);
-      case GameState.playing:
-        return _buildGameScreen(isDarkMode, surfaceColor, primaryColor, cellSize);
-      case GameState.gameOver:
-        return _buildGameOverScreen(isDarkMode, primaryColor, textColor);
-    }
-  }
-  
-  // Начальный экран
-  Widget _buildStartScreen(bool isDarkMode, Color primaryColor, Color textColor) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.grid_4x4,
-            size: 80,
-            color: primaryColor,
-          ),
-          const SizedBox(height: 24),
-          Text(
-            'КолледжБлоки',
-            style: TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-              color: textColor,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'Размещайте блоки разных цветов и форм,\nзаполняйте строки и столбцы для получения очков!',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 16,
-              color: textColor.withOpacity(0.8),
-            ),
-          ),
-          const SizedBox(height: 32),
-          ElevatedButton(
-            onPressed: _startGame,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: primaryColor,
-              foregroundColor: isDarkMode ? Colors.white : Colors.black87,
-              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-            ),
-            child: const Text(
-              'НАЧАТЬ ИГРУ',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          const SizedBox(height: 24),
-          if (highScore > 0)
-            Text(
-              'Ваш рекорд: $highScore',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: primaryColor,
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-  
-  // Экран игры
-  Widget _buildGameScreen(bool isDarkMode, Color surfaceColor, Color primaryColor, double cellSize) {
-    return Column(
-      children: [
-        // Игровая доска
-        Expanded(
-          flex: 3,
-          child: Stack(
-            children: [
-              _buildGameBoard(isDarkMode, surfaceColor, primaryColor, cellSize),
-              // Кнопка "Назад" в верхнем левом углу
-              Positioned(
-                top: 16,
-                left: 16,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: isDarkMode ? Colors.grey[800] : Colors.white,
-                    borderRadius: BorderRadius.circular(30),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.2),
-                        blurRadius: 4,
-                        offset: const Offset(0, 2),
-                      )
-                    ],
-                  ),
-                  child: IconButton(
-                    icon: Icon(
-                      Icons.arrow_back,
-                      color: primaryColor,
-                    ),
-                    onPressed: () {
-                      setState(() {
-                        gameState = GameState.notStarted;
-                        _saveGameState();
-                      });
-                    },
-                    tooltip: 'Вернуться в меню',
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        // Доступные блоки
-        Expanded(
-          flex: 1,
-          child: _buildBlockSelector(isDarkMode, surfaceColor, primaryColor),
-        ),
-      ],
-    );
-  }
-  
-  // Экран окончания игры
-  Widget _buildGameOverScreen(bool isDarkMode, Color primaryColor, Color textColor) {
-    return Center(
-      child: Card(
-        elevation: 8,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        margin: const EdgeInsets.all(24),
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.emoji_events,
-                size: 64,
-                color: primaryColor,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Игра окончена!',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: textColor,
-                ),
-              ),
-              const SizedBox(height: 24),
-              Text(
-                'Ваш счет: $score',
-                style: TextStyle(
-                  fontSize: 20,
-                  color: textColor,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Лучший результат: $highScore',
-                style: TextStyle(
-                  fontSize: 18,
-                  color: primaryColor,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 32),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  OutlinedButton(
-                    onPressed: () {
-                      setState(() {
-                        gameState = GameState.notStarted;
-                      });
-                    },
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      side: BorderSide(color: primaryColor),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: Text(
-                      'Главное меню',
-                      style: TextStyle(
-                        color: primaryColor,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  ElevatedButton(
-                    onPressed: _restartGame,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: primaryColor,
-                      foregroundColor: isDarkMode ? Colors.white : Colors.black87,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: const Text(
-                      'Играть снова',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-  
   // Строим игровую доску
   Widget _buildGameBoard(bool isDarkMode, Color surfaceColor, Color primaryColor, double cellSize) {
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: Container(
+        key: _boardKey, // Добавляем ключ для доступа к размерам
         decoration: BoxDecoration(
           color: isDarkMode ? Colors.grey[850] : Colors.grey[100],
           borderRadius: BorderRadius.circular(16),
@@ -968,50 +647,65 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
                 },
               ),
               
-              // Превью размещения блока - следует за движением
+              // Превью размещения блока
               if (isDragging && draggedBlock != null)
                 Positioned.fill(
-                  child: DragTarget<Block>(
-                    onWillAcceptWithDetails: (details) {
-                      final Block block = details.data;
-                      return _updatePreview(block, details.offset);
-                    },
-                    onAcceptWithDetails: (details) {
-                      final Block block = details.data;
-                      
-                      // Определяем ячейку доски
-                      if (previewRow >= 0 && previewCol >= 0) {
-                        _placeBlock(block, previewRow, previewCol);
-                      }
-                      
-                      _resetPreview();
-                    },
-                    onLeave: (_) {
-                      _resetPreview();
-                    },
-                    builder: (context, candidateData, rejectedData) {
-                      return MouseRegion(
-                        onHover: (event) {
-                          _updatePreview(draggedBlock!, event.position);
-                        },
-                        child: AnimatedBuilder(
-                          animation: _pulseAnimation,
-                          builder: (context, child) {
-                            return CustomPaint(
-                              painter: BlockPreviewPainter(
-                                block: draggedBlock!,
-                                row: previewRow,
-                                col: previewCol,
-                                boardSize: boardSize,
-                                cellSize: cellSize,
-                                color: primaryColor.withOpacity(_pulseAnimation.value),
-                                isValid: _canPlaceBlock(draggedBlock!, previewRow, previewCol),
-                              ),
-                            );
-                          }
-                        ),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      // Уточняем размер ячейки на основе размера контейнера
+                      final actualCellSize = min(
+                        constraints.maxWidth / boardSize,
+                        constraints.maxHeight / boardSize
                       );
-                    },
+                      
+                      return DragTarget<Block>(
+                        onWillAcceptWithDetails: (details) {
+                          final Block block = details.data;
+                          final result = _updatePreview(block, details.offset);
+                          return result;
+                        },
+                        onAcceptWithDetails: (details) {
+                          final Block block = details.data;
+                          
+                          // Размещаем блок только если есть корректная позиция
+                          if (previewRow >= 0 && previewCol >= 0) {
+                            _placeBlock(block, previewRow, previewCol);
+                          } else {
+                            debugPrint('Недопустимая позиция для размещения блока');
+                          }
+                          
+                          _resetPreview();
+                        },
+                        onLeave: (_) {
+                          _resetPreview();
+                        },
+                        builder: (context, candidateData, rejectedData) {
+                          return MouseRegion(
+                            onHover: (event) {
+                              if (draggedBlock != null) {
+                                _updatePreview(draggedBlock!, event.position);
+                              }
+                            },
+                            child: AnimatedBuilder(
+                              animation: _pulseAnimation,
+                              builder: (context, child) {
+                                return CustomPaint(
+                                  painter: BlockPreviewPainter(
+                                    block: draggedBlock!,
+                                    row: previewRow,
+                                    col: previewCol,
+                                    boardSize: boardSize,
+                                    cellSize: actualCellSize,
+                                    color: primaryColor.withOpacity(_pulseAnimation.value),
+                                    isValid: _canPlaceBlock(draggedBlock!, previewRow, previewCol),
+                                  ),
+                                );
+                              }
+                            ),
+                          );
+                        },
+                      );
+                    }
                   ),
                 ),
             ],
@@ -1081,6 +775,7 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
               children: [
                 for (int i = 0; i < availableBlocks.length; i++)
                   Draggable<Block>(
+                    maxSimultaneousDrags: 1, // Разрешаем только одно перетаскивание за раз
                     data: availableBlocks[i],
                     feedback: _buildBlockFeedback(availableBlocks[i], isDarkMode, primaryColor),
                     childWhenDragging: Container(
@@ -1102,13 +797,27 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
                         selectedBlockIndex = i;
                         isDragging = true;
                         draggedBlock = availableBlocks[i];
+                        
+                        // Сбрасываем позицию предпросмотра
+                        previewRow = -1;
+                        previewCol = -1;
                       });
                     },
                     onDraggableCanceled: (_, __) {
-                      _resetPreview();
+                      setState(() {
+                        _resetPreview();
+                      });
                     },
                     onDragEnd: (_) {
-                      _resetPreview();
+                      setState(() {
+                        _resetPreview();
+                      });
+                    },
+                    onDragCompleted: () {
+                      // Очищаем после успешного размещения
+                      setState(() {
+                        _resetPreview();
+                      });
                     },
                     child: _buildBlockPreview(availableBlocks[i], isDarkMode: isDarkMode),
                   ),
@@ -1252,61 +961,540 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
     );
   }
   
-  // Размещаем блок на доске
-  void _placeBlock(Block block, int row, int col) {
-    // Проверяем возможность размещения еще раз перед фактическим размещением
-    if (!_canPlaceBlock(block, row, col)) {
-      // Если не можем разместить, просто выходим
-      return;
-    }
-    
-    // Размещаем блок
-    for (int i = 0; i < block.shape.length; i++) {
-      for (int j = 0; j < block.shape[i].length; j++) {
-        if (block.shape[i][j]) {
-          if (row + i >= 0 && row + i < boardSize && col + j >= 0 && col + j < boardSize) {
-            board[row + i][col + j].isFilled = true;
-            board[row + i][col + j].color = block.color;
-          }
-        }
-      }
-    }
-    
-    // Запускаем анимацию размещения
-    _animationController.reset();
-    _animationController.forward();
-    
-    // Проверяем заполненные строки и столбцы
-    _checkLines();
-    
-    // Удаляем использованный блок
-    setState(() {
-      if (selectedBlockIndex >= 0 && selectedBlockIndex < availableBlocks.length) {
-        availableBlocks.removeAt(selectedBlockIndex);
-        placedBlocksCount++;
-      }
-      selectedBlock = null;
-      selectedBlockIndex = -1;
-      
-      // Генерируем новые блоки, если все размещены
-      _generateBlocks();
-    });
-    
-    // Проверяем, можно ли продолжить игру
-    if (!_canContinueGame()) {
-      _gameOver();
-    }
-    
-    // Сохраняем состояние игры
-    _saveGameState();
-  }
-  
   // Завершаем игру
   void _gameOver() {
     _saveHighScore();
     setState(() {
       gameState = GameState.gameOver;
     });
+  }
+
+  // Добавляем методы для начальной страницы
+  Future<bool> _hasSavedGame() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedState = prefs.getString('minigame_saved_state');
+    if (savedState == null) return false;
+    
+    try {
+      final gameStateMap = jsonDecode(savedState) as Map<String, dynamic>;
+      final savedGameState = gameStateMap['gameState'] ?? 0;
+      return GameState.values[savedGameState] == GameState.playing;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Начинаем новую игру и очищаем сохранение
+  void _startNewGame() {
+    setState(() {
+      // Очищаем сохраненную игру
+      _clearSavedGame();
+      
+      // Очищаем доску
+      for (int i = 0; i < boardSize; i++) {
+        for (int j = 0; j < boardSize; j++) {
+          board[i][j].isFilled = false;
+          board[i][j].color = Colors.transparent;
+        }
+      }
+      
+      // Полностью сбрасываем состояние игры
+      score = 0;
+      placedBlocksCount = 0;
+      
+      // Очищаем старые блоки и создаём новые
+      availableBlocks.clear();
+      _generateBlocks();
+      
+      // Переходим в состояние игры
+      gameState = GameState.playing;
+    });
+  }
+
+  // Продолжаем сохраненную игру
+  void _continueGame() async {
+    await _loadGameState();
+    setState(() {
+      gameState = GameState.playing;
+    });
+  }
+
+  // Очистка сохраненной игры
+  Future<void> _clearSavedGame() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('minigame_saved_state');
+  }
+
+  // Полностью переработанный метод для обновления предпросмотра блока
+  bool _updatePreview(Block block, Offset position) {
+    // Получаем границы игрового поля
+    final RenderBox? renderBox = _boardKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null) {
+      debugPrint("Не удалось получить RenderBox доски");
+      return false; 
+    }
+    
+    // Конвертируем глобальные координаты в локальные для доски
+    final localPosition = renderBox.globalToLocal(position);
+    
+    // Определяем точные размеры игрового поля
+    final boardWidth = renderBox.size.width;
+    final boardHeight = renderBox.size.height;
+    
+    // Вычисляем размер одной ячейки
+    final double cellWidth = boardWidth / boardSize;
+    final double cellHeight = boardHeight / boardSize;
+    
+    debugPrint('Размер доски: ${boardWidth}x${boardHeight}, ячейка: ${cellWidth}x${cellHeight}');
+    
+    // Проверяем, что курсор находится в пределах доски
+    if (localPosition.dx < 0 || localPosition.dx > boardWidth ||
+        localPosition.dy < 0 || localPosition.dy > boardHeight) {
+      debugPrint('Курсор вне доски: ${localPosition.dx}, ${localPosition.dy}');
+      return false;
+    }
+    
+    // Вычисляем колонку и строку, где находится курсор
+    final int col = (localPosition.dx / cellWidth).floor();
+    final int row = (localPosition.dy / cellHeight).floor();
+    
+    // Учитываем центрирование блока (смещаем позицию размещения)
+    final int blockCenterRow = block.shape.length ~/ 2;
+    final int blockCenterCol = block.shape[0].length ~/ 2;
+    
+    // Вычисляем итоговую позицию с учетом центрирования блока
+    final int adjustedCol = col - blockCenterCol;
+    final int adjustedRow = row - blockCenterRow;
+    
+    // Выводим отладочную информацию
+    debugPrint('Локальная позиция: (${localPosition.dx}, ${localPosition.dy})');
+    debugPrint('Ячейка игрового поля: ($row, $col)');
+    debugPrint('Позиция для размещения блока: ($adjustedRow, $adjustedCol)');
+    
+    // Проверяем возможность размещения
+    bool canPlace = _canPlaceBlock(block, adjustedRow, adjustedCol);
+    
+    debugPrint('Можно разместить: $canPlace');
+    
+    setState(() {
+      previewRow = adjustedRow;
+      previewCol = adjustedCol;
+      isDragging = true;
+    });
+    
+    return canPlace;
+  }
+
+  // Улучшаем метод размещения блока
+  void _placeBlock(Block block, int row, int col) {
+    debugPrint('Попытка разместить блок в позиции ($row, $col)');
+    
+    // Проверяем возможность размещения
+    if (!_canPlaceBlock(block, row, col)) {
+      debugPrint('Невозможно разместить блок в позиции ($row, $col)');
+      return;
+    }
+    
+    debugPrint('Размещаем блок в позиции ($row, $col)');
+    
+    // Размещаем блок на доске
+    for (int i = 0; i < block.shape.length; i++) {
+      for (int j = 0; j < block.shape[i].length; j++) {
+        if (block.shape[i][j]) {
+          final int boardRow = row + i;
+          final int boardCol = col + j;
+          
+          if (boardRow >= 0 && boardRow < boardSize && 
+              boardCol >= 0 && boardCol < boardSize) {
+            setState(() {
+              board[boardRow][boardCol].isFilled = true;
+              board[boardRow][boardCol].color = block.color;
+            });
+          }
+        }
+      }
+    }
+    
+    // Удаляем использованный блок из доступных
+    setState(() {
+      if (selectedBlockIndex >= 0 && selectedBlockIndex < availableBlocks.length) {
+        availableBlocks.removeAt(selectedBlockIndex);
+        placedBlocksCount++;
+      }
+      
+      selectedBlock = null;
+      selectedBlockIndex = -1;
+      
+      // Проверяем заполненные линии
+      _checkLines();
+      
+      // Генерируем новые блоки если нужно
+      _generateBlocks();
+      
+      // Проверяем возможность продолжения
+      if (!_canContinueGame()) {
+        _gameOver();
+      }
+    });
+    
+    // Запускаем анимацию размещения
+    _animationController.reset();
+    _animationController.forward();
+    
+    // Сохраняем состояние игры
+    _saveGameState();
+  }
+  
+  // Улучшаем метод сброса превью для более надежной работы
+  void _resetPreview() {
+    if (mounted) {
+      setState(() {
+        previewRow = -1;
+        previewCol = -1;
+        isDragging = false;
+        draggedBlock = null;
+      });
+    }
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    // Обновляем флаг темы при каждой перерисовке
+    _isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    
+    final primaryColor = Theme.of(context).colorScheme.primary;
+    final surfaceColor = Theme.of(context).colorScheme.surface;
+    final textColor = Theme.of(context).colorScheme.onSurface;
+    
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('КолледжБлоки'),
+        elevation: 0,
+        // Добавляем кнопку назад в appBar для состояния игры
+        leading: gameState == GameState.playing 
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () {
+                  setState(() {
+                    gameState = GameState.notStarted;
+                    _saveGameState();
+                  });
+                },
+                tooltip: 'Вернуться в меню',
+              )
+            : null,
+        actions: [
+          // Отображаем текущий счет и лучший результат
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Center(
+              child: Text(
+                'Счет: $score | Рекорд: $highScore',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: textColor,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          // Сохраняем размеры доски для корректных расчетов
+          final boardWidth = constraints.maxWidth;
+          final boardHeight = constraints.maxHeight * 0.75; // 75% для игровой доски
+          final cellSize = boardWidth / boardSize;
+          
+          return Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: _isDarkMode
+                    ? [Colors.black87, Colors.black54]
+                    : [Colors.blue.shade50, Colors.white],
+              ),
+            ),
+            child: _buildGameContent(_isDarkMode, primaryColor, surfaceColor, textColor, cellSize),
+          );
+        }
+      ),
+    );
+  }
+  
+  // Строим содержимое игры в зависимости от состояния
+  Widget _buildGameContent(bool isDarkMode, Color primaryColor, Color surfaceColor, Color textColor, double cellSize) {
+    switch (gameState) {
+      case GameState.notStarted:
+        return _buildStartScreen(isDarkMode, primaryColor, textColor);
+      case GameState.playing:
+        return _buildGameScreen(isDarkMode, surfaceColor, primaryColor, cellSize);
+      case GameState.gameOver:
+        return _buildGameOverScreen(isDarkMode, primaryColor, textColor);
+    }
+  }
+  
+  // Начальный экран
+  Widget _buildStartScreen(bool isDarkMode, Color primaryColor, Color textColor) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: isDarkMode 
+              ? [Colors.grey[900]!, Colors.black]
+              : [Colors.blue[100]!, Colors.blue[50]!],
+        ),
+      ),
+      child: Center(
+        child: Card(
+          elevation: 12,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          color: isDarkMode ? Colors.grey[850] : Colors.white,
+          margin: const EdgeInsets.all(24),
+          child: Padding(
+            padding: const EdgeInsets.all(32.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.grid_4x4,
+                  size: 80,
+                  color: primaryColor,
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  'КолледжБлоки',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: textColor,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: isDarkMode ? Colors.grey[800] : Colors.blue[50],
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Text(
+                    'Размещайте блоки разных цветов и форм,\nзаполняйте строки и столбцы для получения очков!',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: textColor.withOpacity(0.9),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 32),
+
+                // Добавляем проверку наличия сохраненной игры
+                FutureBuilder<bool>(
+                  future: _hasSavedGame(),
+                  builder: (context, snapshot) {
+                    final bool hasSavedGame = snapshot.data ?? false;
+                    
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ElevatedButton(
+                          onPressed: _startNewGame,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: primaryColor,
+                            foregroundColor: isDarkMode ? Colors.white : Colors.black87,
+                            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            minimumSize: const Size(240, 60),
+                          ),
+                          child: const Text(
+                            'НОВАЯ ИГРА',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        
+                        if (hasSavedGame) ...[
+                          const SizedBox(height: 16),
+                          OutlinedButton(
+                            onPressed: _continueGame,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: primaryColor,
+                              side: BorderSide(color: primaryColor, width: 2),
+                              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              minimumSize: const Size(240, 60),
+                            ),
+                            child: const Text(
+                              'ПРОДОЛЖИТЬ',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    );
+                  },
+                ),
+
+                const SizedBox(height: 24),
+                if (highScore > 0)
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: primaryColor.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.emoji_events, color: primaryColor),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Ваш рекорд: $highScore',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: primaryColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+  
+  // Экран игры
+  Widget _buildGameScreen(bool isDarkMode, Color surfaceColor, Color primaryColor, double cellSize) {
+    return Column(
+      children: [
+        // Игровая доска
+        Expanded(
+          flex: 3,
+          child: _buildGameBoard(isDarkMode, surfaceColor, primaryColor, cellSize),
+        ),
+        // Доступные блоки
+        Expanded(
+          flex: 1,
+          child: _buildBlockSelector(isDarkMode, surfaceColor, primaryColor),
+        ),
+      ],
+    );
+  }
+  
+  // Экран окончания игры
+  Widget _buildGameOverScreen(bool isDarkMode, Color primaryColor, Color textColor) {
+    return Center(
+      child: Card(
+        elevation: 8,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        margin: const EdgeInsets.all(24),
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.emoji_events,
+                size: 64,
+                color: primaryColor,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Игра окончена!',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: textColor,
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                'Ваш счет: $score',
+                style: TextStyle(
+                  fontSize: 20,
+                  color: textColor,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Лучший результат: $highScore',
+                style: TextStyle(
+                  fontSize: 18,
+                  color: primaryColor,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 32),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  OutlinedButton(
+                    onPressed: () {
+                      setState(() {
+                        gameState = GameState.notStarted;
+                      });
+                    },
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      side: BorderSide(color: primaryColor),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Text(
+                      'Главное меню',
+                      style: TextStyle(
+                        color: primaryColor,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  ElevatedButton(
+                    onPressed: _restartGame,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: primaryColor,
+                      foregroundColor: isDarkMode ? Colors.white : Colors.black87,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'Играть снова',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
