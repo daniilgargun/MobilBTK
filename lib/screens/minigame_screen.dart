@@ -759,6 +759,8 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
   
   // Рассчитываем и применяем очки с учетом комбо
   void _calculateAndApplyScore(int clearedLines) {
+    if (!mounted) return; // Проверка mounted перед обновлением состояния
+    
     // Базовые очки за линию
     int basePoints = 10;
     int totalPoints = basePoints * clearedLines;
@@ -790,12 +792,18 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
     // Сохраняем количество собранных линий для следующего хода
     lastLinesClearedCount = clearedLines;
     
-    // Обновляем счет и бонус для отображения
-    setState(() {
-      score += totalPoints;
-      bonusPoints = totalPoints;
-      showComboAnimation = clearedLines >= 2 || comboCount > 1;
-    });
+    // Безопасно обновляем счет и бонус для отображения
+    try {
+      if (mounted) { // Дополнительная проверка mounted
+        setState(() {
+          score += totalPoints;
+          bonusPoints = totalPoints;
+          showComboAnimation = clearedLines >= 2 || comboCount > 1;
+        });
+      }
+    } catch (e) {
+      debugPrint('Ошибка при обновлении счета: $e');
+    }
     
     // Сохраняем высокий счет
     _saveHighScore();
@@ -803,24 +811,34 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
   
   // Анимация исчезновения заполненных линий
   void _animateLineClearing(List<int> rows, List<int> cols) {
+    if (!mounted) return; // Проверка mounted перед началом анимации
+
     // Начинаем с полной непрозрачности
     double opacity = 1.0;
     
     // Создаем анимацию мигания для привлечения внимания
     void animateFlash() {
+      if (!mounted) return; // Проверка mounted перед запуском отложенного действия
+      
       Future.delayed(const Duration(milliseconds: 100), () {
         if (!mounted) return;
         
-        setState(() {
-          lineOpacity = opacity;
-        });
-        
-        opacity -= 0.1;
-        
-        if (opacity > 0) {
-          animateFlash();
-        } else {
-          // Когда анимация завершена, визуально очищаем линии
+        try {
+          setState(() {
+            lineOpacity = opacity;
+          });
+          
+          opacity -= 0.1;
+          
+          if (opacity > 0) {
+            animateFlash();
+          } else {
+            // Когда анимация завершена, визуально очищаем линии
+            _finishLineAnimation(rows, cols);
+          }
+        } catch (e) {
+          debugPrint('Ошибка в анимации исчезновения линий: $e');
+          // В случае ошибки немедленно завершаем анимацию
           _finishLineAnimation(rows, cols);
         }
       });
@@ -830,24 +848,34 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
     animateFlash();
     
     // Скрываем анимацию комбо через 1.5 секунды
-    if (showComboAnimation) {
-      Future.delayed(const Duration(milliseconds: 1500), () {
-        if (mounted) {
-          setState(() {
-            showComboAnimation = false;
-          });
-        }
-      });
+    if (showComboAnimation && mounted) {
+      try {
+        Future.delayed(const Duration(milliseconds: 1500), () {
+          if (mounted) {
+            setState(() {
+              showComboAnimation = false;
+            });
+          }
+        });
+      } catch (e) {
+        debugPrint('Ошибка при скрытии анимации комбо: $e');
+      }
     }
   }
   
   // Завершаем анимацию линий и сбрасываем флаги
   void _finishLineAnimation(List<int> rows, List<int> cols) {
-    setState(() {
-      isAnimatingLines = false;
-      animatingRows = [];
-      animatingCols = [];
-    });
+    if (!mounted) return; // Проверка mounted перед обновлением состояния
+    
+    try {
+      setState(() {
+        isAnimatingLines = false;
+        animatingRows = [];
+        animatingCols = [];
+      });
+    } catch (e) {
+      debugPrint('Ошибка при завершении анимации линий: $e');
+    }
   }
   
   // Проверяем, можно ли продолжить игру
@@ -988,29 +1016,31 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
           ),
           
           // Анимация комбо и бонусных очков
-          if (showComboAnimation)
+          if (showComboAnimation && mounted)
             Positioned(
               top: 10,
               right: 10,
               child: TweenAnimationBuilder<double>(
                 tween: Tween<double>(begin: 0.0, end: 1.0),
-                duration: const Duration(milliseconds: 400),
+                duration: const Duration(milliseconds: 600),
+                curve: Curves.elasticOut,
                 builder: (context, value, child) {
                   return Opacity(
                     opacity: value > 0.8 ? (1.0 - (value - 0.8) * 5) : value * 1.25, // Появление и исчезновение
                     child: Transform.scale(
-                      scale: 0.8 + value * 0.4, // Анимация увеличения
+                      scale: 0.8 + value * 0.5, // Анимация увеличения
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                         decoration: BoxDecoration(
                           color: comboCount > 1 
-                              ? Colors.orange.withOpacity(0.8) 
-                              : Colors.green.withOpacity(0.8),
+                              ? Colors.orange.withOpacity(0.9) 
+                              : Colors.green.withOpacity(0.9),
                           borderRadius: BorderRadius.circular(20),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.3),
-                              blurRadius: 8,
+                              color: (comboCount > 1 ? Colors.orange : Colors.green).withOpacity(0.5),
+                              blurRadius: 15,
+                              spreadRadius: 5,
                               offset: const Offset(0, 2),
                             ),
                           ],
@@ -1026,6 +1056,13 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
                                 fontSize: 16,
+                                shadows: [
+                                  Shadow(
+                                    offset: Offset(1, 1),
+                                    blurRadius: 3,
+                                    color: Colors.black54,
+                                  ),
+                                ],
                               ),
                             ),
                             if (comboCount > 1 || lastLinesClearedCount > 1)
@@ -1034,7 +1071,14 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontWeight: FontWeight.bold,
-                                  fontSize: 20,
+                                  fontSize: 22,
+                                  shadows: [
+                                    Shadow(
+                                      offset: Offset(1, 1),
+                                      blurRadius: 3,
+                                      color: Colors.black54,
+                                    ),
+                                  ],
                                 ),
                               ),
                           ],
@@ -1542,6 +1586,9 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
       return;
     }
 
+    // Вычисляем размер размещаемого блока (количество ячеек)
+    int blockSize = block.shape.fold(0, (sum, row) => sum + row.where((cell) => cell).length);
+
     try {
       // Размещаем блок на доске
       for (int i = 0; i < block.shape.length; i++) {
@@ -1575,8 +1622,11 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
         highlightCols = [];
         
         // Обновляем счет - считаем количество true ячеек в матрице формы блока
-        score += block.shape.expand((row) => row).where((cell) => cell).length;
+        score += blockSize;
         
+        // Показываем анимацию +1 за каждую ячейку
+        _showBlockPlacementPoints(block, row, col, blockSize);
+
         // Проверяем заполненные линии
         _checkLines();
         
@@ -1598,6 +1648,75 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
     } catch (e) {
       // Обрабатываем любые ошибки при размещении блока
       debugPrint('Ошибка при размещении блока: $e');
+    }
+  }
+
+  // Показываем анимацию начисления очков при размещении блока
+  void _showBlockPlacementPoints(Block block, int startRow, int startCol, int points) {
+    if (!mounted) return; // Проверка mounted перед показом анимации
+    
+    try {
+      // Получаем глобальные координаты игрового поля
+      final RenderBox? boardBox = _boardKey.currentContext?.findRenderObject() as RenderBox?;
+      if (boardBox == null) return;
+
+      // Определяем центр размещенного блока для позиционирования эффекта
+      double centerX = 0;
+      double centerY = 0;
+      int cellCount = 0;
+
+      for (int i = 0; i < block.shape.length; i++) {
+        for (int j = 0; j < block.shape[i].length; j++) {
+          if (block.shape[i][j]) {
+            centerX += (startCol + j);
+            centerY += (startRow + i);
+            cellCount++;
+          }
+        }
+      }
+
+      // Находим средние координаты
+      if (cellCount > 0) {
+        centerX = centerX / cellCount;
+        centerY = centerY / cellCount;
+      }
+
+      // Размер ячейки для позиционирования
+      final double cellSize = boardBox.size.width / boardSize;
+      
+      // Предварительно объявляем переменную
+      late OverlayEntry entry;
+      
+      // Добавляем виджет с анимацией +N очков
+      entry = OverlayEntry(
+        builder: (context) {
+          return Positioned(
+            left: boardBox.localToGlobal(Offset.zero).dx + centerX * cellSize,
+            top: boardBox.localToGlobal(Offset.zero).dy + centerY * cellSize - 20,
+            child: PointsAnimation(
+              key: GlobalKey(),
+              points: points,
+              color: block.color,
+              onComplete: () {
+                // Удаляем оверлей после завершения анимации
+                try {
+                  entry.remove();
+                } catch (e) {
+                  debugPrint('Ошибка при удалении оверлей анимации очков: $e');
+                }
+              },
+            ),
+          );
+        }
+      );
+      
+      // Безопасно вставляем оверлей
+      final overlayState = Overlay.of(context);
+      if (overlayState != null && mounted) {
+        overlayState.insert(entry);
+      }
+    } catch (e) {
+      debugPrint('Ошибка при показе анимации очков: $e');
     }
   }
   
@@ -2387,5 +2506,131 @@ class BlockPreviewPainter extends CustomPainter {
           oldDelegate.color != color;
     }
     return true;
+  }
+} 
+
+// Добавляем класс анимации очков в конец файла
+class PointsAnimation extends StatefulWidget {
+  final int points;
+  final Color color;
+  final VoidCallback onComplete;
+
+  const PointsAnimation({
+    Key? key,
+    required this.points,
+    required this.color,
+    required this.onComplete,
+  }) : super(key: key);
+
+  @override
+  State<PointsAnimation> createState() => _PointsAnimationState();
+}
+
+class _PointsAnimationState extends State<PointsAnimation> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _opacityAnimation;
+  late Animation<double> _scaleAnimation;
+  late Animation<Offset> _positionAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
+
+    _opacityAnimation = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween<double>(begin: 0.0, end: 1.0), weight: 20),
+      TweenSequenceItem(tween: Tween<double>(begin: 1.0, end: 1.0), weight: 60),
+      TweenSequenceItem(tween: Tween<double>(begin: 1.0, end: 0.0), weight: 20),
+    ]).animate(_controller);
+
+    _scaleAnimation = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween<double>(begin: 0.5, end: 1.3), weight: 30),
+      TweenSequenceItem(tween: Tween<double>(begin: 1.3, end: 1.0), weight: 20),
+      TweenSequenceItem(tween: Tween<double>(begin: 1.0, end: 1.0), weight: 30),
+      TweenSequenceItem(tween: Tween<double>(begin: 1.0, end: 0.8), weight: 20),
+    ]).animate(CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeOut,
+    ));
+
+    _positionAnimation = Tween<Offset>(
+      begin: Offset.zero,
+      end: const Offset(0, -50),
+    ).animate(CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeOut,
+    ));
+
+    try {
+      _controller.forward().then((_) {
+        if (mounted) {
+          widget.onComplete();
+        }
+      });
+    } catch (e) {
+      debugPrint('Ошибка при запуске анимации очков: $e');
+      // В случае ошибки, все равно пытаемся вызвать onComplete
+      widget.onComplete();
+    }
+  }
+
+  @override
+  void dispose() {
+    try {
+      _controller.dispose();
+    } catch (e) {
+      debugPrint('Ошибка при очистке контроллера анимации: $e');
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Transform.translate(
+          offset: _positionAnimation.value,
+          child: Opacity(
+            opacity: _opacityAnimation.value,
+            child: Transform.scale(
+              scale: _scaleAnimation.value,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: widget.color.withOpacity(0.8),
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.2),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Text(
+                  '+${widget.points}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    shadows: [
+                      Shadow(
+                        offset: Offset(1, 1),
+                        blurRadius: 2,
+                        color: Colors.black54,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 } 
