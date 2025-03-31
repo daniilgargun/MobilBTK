@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'dart:math';
+import 'dart:math' as math;
+import 'dart:math' show Random;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -77,6 +78,74 @@ enum GameState {
   notStarted,
   playing,
   gameOver
+}
+
+// Дополнительный painter для feedback при перетаскивании
+class FeedbackBlockPainter extends CustomPainter {
+  final Block block;
+  final double cellSize;
+  final Color color;
+  final bool isDarkMode;
+  
+  FeedbackBlockPainter({
+    required this.block,
+    required this.cellSize,
+    required this.color,
+    required this.isDarkMode,
+  });
+  
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rows = block.shape.length;
+    final cols = block.shape[0].length;
+    
+    final fillPaint = Paint()
+      ..color = color.withOpacity(0.8)
+      ..style = PaintingStyle.fill;
+      
+    final borderPaint = Paint()
+      ..color = Colors.white.withOpacity(0.9)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0;
+    
+    // Рисуем каждую ячейку блока
+    for (int i = 0; i < rows; i++) {
+      for (int j = 0; j < cols; j++) {
+        if (block.shape[i][j]) {
+          final Rect rect = Rect.fromLTWH(
+            j * cellSize, 
+            i * cellSize, 
+            cellSize, 
+            cellSize
+          );
+          
+          // Рисуем прямоугольник с закругленными углами
+          final RRect roundedRect = RRect.fromRectAndRadius(
+            rect.deflate(2), 
+            const Radius.circular(6)
+          );
+          
+          // Заполняем ячейку
+          canvas.drawRRect(roundedRect, fillPaint);
+          
+          // Рисуем границу
+          canvas.drawRRect(roundedRect, borderPaint);
+          
+          // Добавляем декоративный элемент в центре
+          canvas.drawCircle(
+            rect.center, 
+            cellSize * 0.2, 
+            Paint()
+              ..color = Colors.white.withOpacity(0.8)
+              ..style = PaintingStyle.fill
+          );
+        }
+      }
+    }
+  }
+  
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class MinigameScreen extends StatefulWidget {
@@ -375,23 +444,39 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
     }
   }
   
-  // Проверяем, можно ли разместить блок на доске
+  // Проверяем, можно ли разместить блок в указанной позиции
   bool _canPlaceBlock(Block block, int row, int col) {
-    // Проверяем границы доски
-    if (row < 0 || col < 0) return false;
-    if (row + block.shape.length > boardSize || 
-        col + block.shape[0].length > boardSize) return false;
+    // Проверка, что позиция находится в пределах доски
+    if (row < 0 || col < 0 || row + block.shape.length > boardSize || col + block.shape[0].length > boardSize) {
+      return false;
+    }
     
-    // Проверяем, что все клетки блока можно разместить
+    // Обходим каждую ячейку блока
+    bool hasAtLeastOneCell = false;
+    
     for (int i = 0; i < block.shape.length; i++) {
       for (int j = 0; j < block.shape[i].length; j++) {
-        if (block.shape[i][j] && board[row + i][col + j].isFilled) {
-          return false;
+        // Если ячейка блока заполнена
+        if (block.shape[i][j] == 1) {
+          hasAtLeastOneCell = true;
+          final int boardRow = row + i;
+          final int boardCol = col + j;
+          
+          // Проверка на выход за границы доски
+          if (boardRow < 0 || boardRow >= boardSize || boardCol < 0 || boardCol >= boardSize) {
+            return false;
+          }
+          
+          // Проверка, что ячейка доски не занята
+          if (board[boardRow][boardCol].isFilled) {
+            return false;
+          }
         }
       }
     }
     
-    return true;
+    // Проверяем, что блок имеет хотя бы одну ячейку
+    return hasAtLeastOneCell;
   }
   
   // Сохраняем состояние игры
@@ -584,7 +669,7 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
         totalPoints = (totalPoints * 1.5).toInt(); // Бонус за 2+ линии
       }
       if (clearedLines >= 3) {
-        totalPoints = (totalPoints * 1.5).toInt(); // Дополнительный бонус за 3+ линии
+        totalPoints = (totalPoints * 1.5).toInt(); // Дополнительный бонус за 3+ линий
       }
       
       setState(() {
@@ -638,6 +723,7 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
                 physics: const NeverScrollableScrollPhysics(),
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: boardSize,
+                  childAspectRatio: 1.0, // Важно для корректных квадратных ячеек
                 ),
                 itemCount: boardSize * boardSize,
                 itemBuilder: (context, index) {
@@ -652,44 +738,54 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
                 Positioned.fill(
                   child: LayoutBuilder(
                     builder: (context, constraints) {
-                      // Уточняем размер ячейки на основе размера контейнера
-                      final actualCellSize = min(
-                        constraints.maxWidth / boardSize,
-                        constraints.maxHeight / boardSize
-                      );
+                      // Используем точный размер ячейки на основе размера контейнера
+                      final double actualCellSize = constraints.maxWidth / boardSize;
                       
                       return DragTarget<Block>(
+                        // Будем принимать блок при любом событии перетаскивания
+                        onWillAccept: (block) => block != null,
                         onWillAcceptWithDetails: (details) {
                           final Block block = details.data;
-                          final result = _updatePreview(block, details.offset);
-                          return result;
+                          // Только обновляем превью, не принимаем/отклоняем блок
+                          _updatePreview(block, details.offset);
+                          // Всегда возвращаем true, чтобы DragTarget отслеживал событие
+                          return true;
                         },
                         onAcceptWithDetails: (details) {
                           final Block block = details.data;
                           
-                          // Размещаем блок только если есть корректная позиция
-                          if (previewRow >= 0 && previewCol >= 0) {
+                          // Размещаем блок только если есть корректная позиция и можно разместить
+                          if (previewRow >= 0 && previewCol >= 0 && 
+                              _canPlaceBlock(block, previewRow, previewCol)) {
                             _placeBlock(block, previewRow, previewCol);
-                          } else {
-                            debugPrint('Недопустимая позиция для размещения блока');
                           }
                           
                           _resetPreview();
                         },
                         onLeave: (_) {
-                          _resetPreview();
+                          // Не сбрасываем превью сразу при покидании области
                         },
                         builder: (context, candidateData, rejectedData) {
-                          return MouseRegion(
-                            onHover: (event) {
+                          return Listener(
+                            behavior: HitTestBehavior.opaque,
+                            onPointerMove: (event) {
                               if (draggedBlock != null) {
                                 _updatePreview(draggedBlock!, event.position);
                               }
+                            },
+                            onPointerUp: (event) {
+                              // Дополнительная проверка при отпускании указателя
+                              if (draggedBlock != null && previewRow >= 0 && previewCol >= 0 && 
+                                  _canPlaceBlock(draggedBlock!, previewRow, previewCol)) {
+                                _placeBlock(draggedBlock!, previewRow, previewCol);
+                              }
+                              _resetPreview();
                             },
                             child: AnimatedBuilder(
                               animation: _pulseAnimation,
                               builder: (context, child) {
                                 return CustomPaint(
+                                  size: Size(constraints.maxWidth, constraints.maxWidth), // Квадратная доска
                                   painter: BlockPreviewPainter(
                                     block: draggedBlock!,
                                     row: previewRow,
@@ -776,6 +872,11 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
                 for (int i = 0; i < availableBlocks.length; i++)
                   Draggable<Block>(
                     maxSimultaneousDrags: 1, // Разрешаем только одно перетаскивание за раз
+                    dragAnchorStrategy: (draggable, context, position) {
+                      // Возвращаем центр виджета для лучшего позиционирования
+                      final RenderBox renderObject = context.findRenderObject() as RenderBox;
+                      return Offset(renderObject.size.width / 2, renderObject.size.height / 2);
+                    },
                     data: availableBlocks[i],
                     feedback: _buildBlockFeedback(availableBlocks[i], isDarkMode, primaryColor),
                     childWhenDragging: Container(
@@ -803,12 +904,26 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
                         previewCol = -1;
                       });
                     },
+                    onDragUpdate: (details) {
+                      // Обновляем превью при каждом изменении положения
+                      if (draggedBlock != null) {
+                        _updatePreview(draggedBlock!, details.globalPosition);
+                      }
+                    },
                     onDraggableCanceled: (_, __) {
                       setState(() {
                         _resetPreview();
                       });
                     },
-                    onDragEnd: (_) {
+                    onDragEnd: (details) {
+                      // Проверяем, был ли блок размещен, если нет - сбрасываем превью
+                      if (details.wasAccepted == false && draggedBlock != null && 
+                          previewRow >= 0 && previewCol >= 0 && 
+                          _canPlaceBlock(draggedBlock!, previewRow, previewCol)) {
+                        // Если перетаскивание закончилось, но блок можно разместить - размещаем его
+                        _placeBlock(draggedBlock!, previewRow, previewCol);
+                      }
+                      
                       setState(() {
                         _resetPreview();
                       });
@@ -833,11 +948,11 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
   Widget _buildBlockFeedback(Block block, bool isDarkMode, Color primaryColor) {
     final int rows = block.shape.length;
     final int cols = block.shape[0].length;
-    final double cellSize = 30.0; // Увеличиваем размер для лучшей видимости
+    final double cellSize = 36.0; // Увеличиваем размер для лучшей видимости
     
     return Material(
       color: Colors.transparent,
-      elevation: 10, // Добавляем тень
+      elevation: 12, // Увеличиваем тень
       shadowColor: Colors.black54,
       child: Container(
         width: cellSize * cols,
@@ -846,44 +961,16 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
           color: Colors.transparent,
           borderRadius: BorderRadius.circular(8),
         ),
-        child: GridView.builder(
-          padding: EdgeInsets.zero,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: cols,
-            childAspectRatio: 1.0,
-            crossAxisSpacing: 2,
-            mainAxisSpacing: 2,
+        child: Center(
+          child: CustomPaint(
+            size: Size(cellSize * cols, cellSize * rows),
+            painter: FeedbackBlockPainter(
+              block: block,
+              cellSize: cellSize,
+              color: block.color,
+              isDarkMode: isDarkMode,
+            ),
           ),
-          itemCount: rows * cols,
-          itemBuilder: (context, index) {
-            final int r = index ~/ cols;
-            final int c = index % cols;
-            if (block.shape[r][c]) {
-              return Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(4),
-                  color: block.color.withOpacity(0.7),
-                  border: Border.all(
-                    color: primaryColor,
-                    width: 2,
-                  ),
-                ),
-                child: Center(
-                  child: Container(
-                    width: cellSize * 0.5,
-                    height: cellSize * 0.5,
-                    decoration: BoxDecoration(
-                      color: block.color,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-              );
-            } else {
-              return SizedBox.shrink(); // Пустой виджет вместо Container()
-            }
-          },
         ),
       ),
     );
@@ -1025,124 +1112,127 @@ class _MinigameScreenState extends State<MinigameScreen> with SingleTickerProvid
     await prefs.remove('minigame_saved_state');
   }
 
-  // Полностью переработанный метод для обновления предпросмотра блока
-  bool _updatePreview(Block block, Offset position) {
-    // Получаем границы игрового поля
-    final RenderBox? renderBox = _boardKey.currentContext?.findRenderObject() as RenderBox?;
-    if (renderBox == null) {
-      debugPrint("Не удалось получить RenderBox доски");
-      return false; 
-    }
+  // Обновление превью размещения блока
+  bool _updatePreview(Block block, Offset pointerPosition) {
+    // Получаем глобальные координаты игрового поля
+    final RenderBox? boardBox = _boardKey.currentContext?.findRenderObject() as RenderBox?;
+    if (boardBox == null) return false;
+
+    // Получаем локальные координаты указателя относительно игрового поля
+    final Offset localPosition = boardBox.globalToLocal(pointerPosition);
     
-    // Конвертируем глобальные координаты в локальные для доски
-    final localPosition = renderBox.globalToLocal(position);
+    // Определяем границы игрового поля
+    final double boardWidth = boardBox.size.width;
+    final double boardHeight = boardBox.size.height;
     
-    // Определяем точные размеры игрового поля
-    final boardWidth = renderBox.size.width;
-    final boardHeight = renderBox.size.height;
-    
-    // Вычисляем размер одной ячейки
-    final double cellWidth = boardWidth / boardSize;
-    final double cellHeight = boardHeight / boardSize;
-    
-    debugPrint('Размер доски: ${boardWidth}x${boardHeight}, ячейка: ${cellWidth}x${cellHeight}');
-    
-    // Проверяем, что курсор находится в пределах доски
-    if (localPosition.dx < 0 || localPosition.dx > boardWidth ||
+    // Проверяем, находится ли указатель в пределах игрового поля
+    if (localPosition.dx < 0 || localPosition.dx > boardWidth || 
         localPosition.dy < 0 || localPosition.dy > boardHeight) {
-      debugPrint('Курсор вне доски: ${localPosition.dx}, ${localPosition.dy}');
+      // Указатель за пределами игрового поля
+      setState(() {
+        previewRow = -1;
+        previewCol = -1;
+        isDragging = false;
+      });
       return false;
     }
     
-    // Вычисляем колонку и строку, где находится курсор
-    final int col = (localPosition.dx / cellWidth).floor();
-    final int row = (localPosition.dy / cellHeight).floor();
+    // Рассчитываем размер ячейки
+    final cellSize = boardWidth / boardSize;
     
-    // Учитываем центрирование блока (смещаем позицию размещения)
-    final int blockCenterRow = block.shape.length ~/ 2;
-    final int blockCenterCol = block.shape[0].length ~/ 2;
+    // Рассчитываем строку и столбец на основе локального положения 
+    int newRow = (localPosition.dy / cellSize).floor();
+    int newCol = (localPosition.dx / cellSize).floor();
     
-    // Вычисляем итоговую позицию с учетом центрирования блока
-    final int adjustedCol = col - blockCenterCol;
-    final int adjustedRow = row - blockCenterRow;
+    // Блок должен располагаться вокруг курсора, поэтому вычитаем половину размера блока
+    int adjustedRow = newRow - (block.shape.length ~/ 2);
+    int adjustedCol = newCol - (block.shape[0].length ~/ 2);
     
-    // Выводим отладочную информацию
-    debugPrint('Локальная позиция: (${localPosition.dx}, ${localPosition.dy})');
-    debugPrint('Ячейка игрового поля: ($row, $col)');
-    debugPrint('Позиция для размещения блока: ($adjustedRow, $adjustedCol)');
+    // Ограничиваем координаты, чтобы блок не выходил за пределы доски
+    adjustedRow = math.max(0, math.min(adjustedRow, boardSize - block.shape.length));
+    adjustedCol = math.max(0, math.min(adjustedCol, boardSize - block.shape[0].length));
     
-    // Проверяем возможность размещения
+    // Проверяем, можно ли разместить блок
     bool canPlace = _canPlaceBlock(block, adjustedRow, adjustedCol);
     
-    debugPrint('Можно разместить: $canPlace');
-    
-    setState(() {
-      previewRow = adjustedRow;
-      previewCol = adjustedCol;
-      isDragging = true;
-    });
+    // Обновляем состояние только если позиция изменилась
+    if (previewRow != adjustedRow || previewCol != adjustedCol || isDragging == false || draggedBlock != block) {
+      setState(() {
+        previewRow = adjustedRow;
+        previewCol = adjustedCol;
+        isDragging = true;
+        draggedBlock = block;
+      });
+    }
     
     return canPlace;
   }
 
-  // Улучшаем метод размещения блока
+  // Размещаем блок на игровой доске
   void _placeBlock(Block block, int row, int col) {
-    debugPrint('Попытка разместить блок в позиции ($row, $col)');
-    
-    // Проверяем возможность размещения
-    if (!_canPlaceBlock(block, row, col)) {
-      debugPrint('Невозможно разместить блок в позиции ($row, $col)');
+    // Проверяем, что координаты находятся в допустимом диапазоне
+    if (row < 0 || col < 0 || row >= boardSize || col >= boardSize) {
       return;
     }
-    
-    debugPrint('Размещаем блок в позиции ($row, $col)');
-    
-    // Размещаем блок на доске
-    for (int i = 0; i < block.shape.length; i++) {
-      for (int j = 0; j < block.shape[i].length; j++) {
-        if (block.shape[i][j]) {
-          final int boardRow = row + i;
-          final int boardCol = col + j;
-          
-          if (boardRow >= 0 && boardRow < boardSize && 
-              boardCol >= 0 && boardCol < boardSize) {
-            setState(() {
+
+    // Проверяем, что блок можно поместить в указанную позицию
+    if (!_canPlaceBlock(block, row, col)) {
+      return;
+    }
+
+    try {
+      // Размещаем блок на доске
+      for (int i = 0; i < block.shape.length; i++) {
+        for (int j = 0; j < block.shape[i].length; j++) {
+          if (block.shape[i][j] == 1) {
+            int boardRow = row + i;
+            int boardCol = col + j;
+            
+            // Дополнительная проверка границ
+            if (boardRow >= 0 && boardRow < boardSize && 
+                boardCol >= 0 && boardCol < boardSize) {
               board[boardRow][boardCol].isFilled = true;
               board[boardRow][boardCol].color = block.color;
-            });
+            }
           }
         }
       }
-    }
-    
-    // Удаляем использованный блок из доступных
-    setState(() {
-      if (selectedBlockIndex >= 0 && selectedBlockIndex < availableBlocks.length) {
-        availableBlocks.removeAt(selectedBlockIndex);
+
+      // Обновляем состояние и проверяем завершение игры
+      setState(() {
+        // Удаляем размещенный блок из доступных блоков
+        availableBlocks.remove(block);
         placedBlocksCount++;
-      }
+        
+        // Сбрасываем состояние перетаскивания
+        draggedBlock = null;
+        isDragging = false;
+        
+        // Обновляем счет
+        score += block.shape.expand((row) => row).where((cell) => cell == 1).length;
+        
+        // Проверяем заполненные линии
+        _checkLines();
+        
+        // Генерируем новые блоки если нужно
+        _generateBlocks();
+        
+        // Проверяем возможность продолжения
+        if (!_canContinueGame()) {
+          _gameOver();
+        }
+      });
+
+      // Запускаем анимацию размещения
+      _animationController.reset();
+      _animationController.forward();
       
-      selectedBlock = null;
-      selectedBlockIndex = -1;
-      
-      // Проверяем заполненные линии
-      _checkLines();
-      
-      // Генерируем новые блоки если нужно
-      _generateBlocks();
-      
-      // Проверяем возможность продолжения
-      if (!_canContinueGame()) {
-        _gameOver();
-      }
-    });
-    
-    // Запускаем анимацию размещения
-    _animationController.reset();
-    _animationController.forward();
-    
-    // Сохраняем состояние игры
-    _saveGameState();
+      // Сохраняем состояние игры
+      _saveGameState();
+    } catch (e) {
+      // Обрабатываем любые ошибки при размещении блока
+      debugPrint('Ошибка при размещении блока: $e');
+    }
   }
   
   // Улучшаем метод сброса превью для более надежной работы
@@ -1507,7 +1597,7 @@ class BlockPreviewPainter extends CustomPainter {
   final double cellSize;
   final Color color;
   final bool isValid;
-  
+
   BlockPreviewPainter({
     required this.block,
     required this.row,
@@ -1517,74 +1607,61 @@ class BlockPreviewPainter extends CustomPainter {
     required this.color,
     required this.isValid,
   });
-  
+
   @override
   void paint(Canvas canvas, Size size) {
-    final double cellWidth = size.width / boardSize;
-    final double cellHeight = size.height / boardSize;
-    
-    // Определяем цвет подсветки на основе валидности размещения
-    final Color fillColor = isValid ? color : Colors.red.withOpacity(0.3);
-    final Color borderColor = isValid ? color.withOpacity(0.9) : Colors.red.withOpacity(0.6);
-    
-    // Создаем кисти для рисования
-    final Paint fillPaint = Paint()
-      ..color = fillColor
-      ..style = PaintingStyle.fill;
-      
+    // Не рисуем если не находимся на доске или нет допустимой позиции
+    if (row < 0 || col < 0) return;
+
     final Paint borderPaint = Paint()
-      ..color = borderColor
+      ..color = isValid ? Colors.green.withOpacity(0.8) : Colors.red.withOpacity(0.8)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 3.0;
-    
-    // Рисуем блок на доске
+      ..strokeWidth = 2.0;
+
+    final Paint fillPaint = Paint()
+      ..color = isValid ? Colors.green.withOpacity(0.3) : Colors.red.withOpacity(0.3)
+      ..style = PaintingStyle.fill;
+
+    // Проходимся по всем ячейкам блока
     for (int i = 0; i < block.shape.length; i++) {
       for (int j = 0; j < block.shape[i].length; j++) {
-        if (block.shape[i][j]) {
-          final Rect rect = Rect.fromLTWH(
-            (col + j) * cellWidth,
-            (row + i) * cellHeight,
-            cellWidth,
-            cellHeight,
-          );
+        if (block.shape[i][j] == 1) {
+          final int boardRow = row + i;
+          final int boardCol = col + j;
           
-          // Проверяем, что ячейка находится в пределах доски
-          if (col + j >= 0 && col + j < boardSize && row + i >= 0 && row + i < boardSize) {
+          // Проверяем, что ячейка находится в пределах игрового поля
+          if (boardRow >= 0 && boardRow < boardSize && boardCol >= 0 && boardCol < boardSize) {
             // Рисуем заполнение
-            canvas.drawRRect(
-              RRect.fromRectAndRadius(rect.deflate(2), Radius.circular(4)),
-              fillPaint,
+            final Rect fillRect = Rect.fromLTWH(
+              boardCol * cellSize,
+              boardRow * cellSize,
+              cellSize,
+              cellSize,
             );
+            canvas.drawRect(fillRect, fillPaint);
             
             // Рисуем границу
-            canvas.drawRRect(
-              RRect.fromRectAndRadius(rect.deflate(2), Radius.circular(4)),
-              borderPaint,
+            final Rect borderRect = Rect.fromLTWH(
+              boardCol * cellSize,
+              boardRow * cellSize,
+              cellSize,
+              cellSize,
             );
-            
-            // Добавляем внутренний круг для лучшей визуализации
-            final double centerX = rect.center.dx;
-            final double centerY = rect.center.dy;
-            final double radius = cellWidth * 0.25;
-            
-            canvas.drawCircle(
-              Offset(centerX, centerY),
-              radius,
-              Paint()
-                ..color = isValid ? Colors.white.withOpacity(0.7) : Colors.white.withOpacity(0.4)
-                ..style = PaintingStyle.fill
-            );
+            canvas.drawRect(borderRect, borderPaint);
           }
         }
       }
     }
   }
-  
+
   @override
-  bool shouldRepaint(covariant BlockPreviewPainter oldDelegate) {
-    return oldDelegate.row != row || 
-           oldDelegate.col != col || 
-           oldDelegate.isValid != isValid ||
-           oldDelegate.color != color;
+  bool shouldRepaint(covariant CustomPainter oldDelegate) {
+    if (oldDelegate is BlockPreviewPainter) {
+      return oldDelegate.row != row ||
+          oldDelegate.col != col ||
+          oldDelegate.isValid != isValid ||
+          oldDelegate.color != color;
+    }
+    return true;
   }
 } 
