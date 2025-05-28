@@ -1,0 +1,12 @@
+import 'package:flutter/material.dart';
+import 'dart:math' as math;
+import 'dart:math' show Random;
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/scheduler.dart';
+import 'dart:math';
+import 'dart:async'; // Добавляем импорт Timer
+import 'package:flutter/painting.dart';
+import 'package:flutter/painting.dart';
+import '../widgets/block_painter.dart';
