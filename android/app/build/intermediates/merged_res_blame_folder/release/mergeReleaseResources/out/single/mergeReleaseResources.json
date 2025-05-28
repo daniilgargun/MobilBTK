@@ -1,0 +1,78 @@
+[
+    {
+        "merged": "by.bartc.schedule.app-release-47:/mipmap-xxxhdpi_ic_launcher.webp.flat",
+        "source": "by.bartc.schedule.app-main-48:/mipmap-xxxhdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "by.bartc.schedule.app-release-47:/drawable-v21_launch_background.xml.flat",
+        "source": "by.bartc.schedule.app-main-48:/drawable-v21/launch_background.xml"
+    },
+    {
+        "merged": "by.bartc.schedule.app-release-47:/mipmap-hdpi_ic_launcher_foreground.webp.flat",
+        "source": "by.bartc.schedule.app-main-48:/mipmap-hdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "by.bartc.schedule.app-release-47:/xml_data_extraction_rules.xml.flat",
+        "source": "by.bartc.schedule.app-main-48:/xml/data_extraction_rules.xml"
+    },
+    {
+        "merged": "by.bartc.schedule.app-release-47:/mipmap-xhdpi_ic_launcher.webp.flat",
+        "source": "by.bartc.schedule.app-main-48:/mipmap-xhdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "by.bartc.schedule.app-release-47:/mipmap-xhdpi_ic_launcher_round.webp.flat",
+        "source": "by.bartc.schedule.app-main-48:/mipmap-xhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "by.bartc.schedule.app-release-47:/mipmap-xxhdpi_ic_launcher.webp.flat",
+        "source": "by.bartc.schedule.app-main-48:/mipmap-xxhdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "by.bartc.schedule.app-release-47:/mipmap-mdpi_ic_launcher.webp.flat",
+        "source": "by.bartc.schedule.app-main-48:/mipmap-mdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "by.bartc.schedule.app-release-47:/mipmap-xxhdpi_ic_launcher_foreground.webp.flat",
+        "source": "by.bartc.schedule.app-main-48:/mipmap-xxhdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "by.bartc.schedule.app-release-47:/mipmap-xhdpi_ic_launcher_foreground.webp.flat",
+        "source": "by.bartc.schedule.app-main-48:/mipmap-xhdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "by.bartc.schedule.app-release-47:/xml_searchable.xml.flat",
+        "source": "by.bartc.schedule.app-main-48:/xml/searchable.xml"
+    },
+    {
+        "merged": "by.bartc.schedule.app-release-47:/mipmap-hdpi_ic_launcher.webp.flat",
+        "source": "by.bartc.schedule.app-main-48:/mipmap-hdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "by.bartc.schedule.app-release-47:/mipmap-hdpi_ic_launcher_round.webp.flat",
+        "source": "by.bartc.schedule.app-main-48:/mipmap-hdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "by.bartc.schedule.app-release-47:/mipmap-xxxhdpi_ic_launcher_round.webp.flat",
+        "source": "by.bartc.schedule.app-main-48:/mipmap-xxxhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "by.bartc.schedule.app-release-47:/xml_backup_rules.xml.flat",
+        "source": "by.bartc.schedule.app-main-48:/xml/backup_rules.xml"
+    },
+    {
+        "merged": "by.bartc.schedule.app-release-47:/mipmap-mdpi_ic_launcher_round.webp.flat",
+        "source": "by.bartc.schedule.app-main-48:/mipmap-mdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "by.bartc.schedule.app-release-47:/mipmap-xxhdpi_ic_launcher_round.webp.flat",
+        "source": "by.bartc.schedule.app-main-48:/mipmap-xxhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "by.bartc.schedule.app-release-47:/mipmap-xxxhdpi_ic_launcher_foreground.webp.flat",
+        "source": "by.bartc.schedule.app-main-48:/mipmap-xxxhdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "by.bartc.schedule.app-release-47:/mipmap-mdpi_ic_launcher_foreground.webp.flat",
+        "source": "by.bartc.schedule.app-main-48:/mipmap-mdpi/ic_launcher_foreground.webp"
+    }
+]

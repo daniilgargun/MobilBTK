@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Настройки резервного копирования данных приложения -->
+    <!-- Включаем все файлы, кроме чувствительных данных -->
+    <include domain="sharedpref" path="."/>
+    <include domain="database" path="."/>
+    <include domain="root" path="."/>
+    <include domain="file" path="."/>
+    <exclude domain="sharedpref" path="sensitive_info.xml"/>
+</full-backup-content> 
