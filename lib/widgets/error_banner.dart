@@ -26,7 +26,7 @@ class ErrorBanner extends StatelessWidget {
           child: Container(
             decoration: BoxDecoration(
               border: Border.all(
-                color: Theme.of(context).colorScheme.error.withOpacity(0.5),
+                color: Theme.of(context).colorScheme.error.withAlpha((0.5 * 255).toInt()),
                 width: 1.5,
               ),
               borderRadius: BorderRadius.circular(12),

@@ -16,7 +16,6 @@
 - Архитектуру приложения
 - Пользовательский интерфейс
 - Логику работы с данными
-- Мини-игру "КолледжБлоки"
 - Систему уведомлений
 - Интеграцию с внешними сервисами
 
@@ -43,7 +42,6 @@ The mobile application "BTK Schedule" was fully developed by Daniil Gargun from 
 - Application architecture
 - User interface
 - Data handling logic
-- "CollegeBlocks" mini-game
 - Notification system
 - External services integration
 
