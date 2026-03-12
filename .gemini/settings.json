@@ -1,0 +1,22 @@
+{
+  "context": {
+    "fileName": "flutter.md"
+  },
+  "mcpServers": {
+    "flutter": {
+      "command": "npx",
+      "args": ["-y", "gemini-cli-extensions/flutter"]
+    },
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"]
+    },
+    "adb": {
+      "command": "npx",
+      "args": ["-y", "adb-mcp@latest"]
+    }
+  },
+  "name": "flutter",
+  "description": "Enables several Flutter and Dart-related commands and context.",
+  "version": "0.3.0"
+}

@@ -42,8 +42,8 @@ class LessonTime {
       if (times.length == 2) {
         result.add((
           '$lessonNumber)',
-          times[0].start + '-' + times[0].end,
-          times[1].start + '-' + times[1].end,
+          '${times[0].start}-${times[0].end}',
+          '${times[1].start}-${times[1].end}',
         ));
       }
     }

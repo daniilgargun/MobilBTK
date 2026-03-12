@@ -20,8 +20,8 @@ class BellScheduleDialog extends StatelessWidget {
                   style: TextStyle(
                     fontWeight: FontWeight.w500,
                     fontSize: 13,
-                    color: Theme.of(context).brightness == Brightness.light 
-                        ? Colors.black87 
+                    color: Theme.of(context).brightness == Brightness.light
+                        ? Colors.black87
                         : Colors.white,
                   ),
                 ),
@@ -38,8 +38,8 @@ class BellScheduleDialog extends StatelessWidget {
                   fontSize: 13,
                   height: 1.2,
                   letterSpacing: -0.5,
-                  color: Theme.of(context).brightness == Brightness.light 
-                      ? Colors.black87 
+                  color: Theme.of(context).brightness == Brightness.light
+                      ? Colors.black87
                       : Colors.white,
                 ),
                 child: Column(
@@ -86,8 +86,8 @@ class BellScheduleDialog extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Icon(Icons.schedule, 
-                      color: Theme.of(context).colorScheme.primary),
+                    Icon(Icons.schedule,
+                        color: Theme.of(context).colorScheme.primary),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -103,28 +103,28 @@ class BellScheduleDialog extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 _buildDaySchedule(
-                  context, 
-                  LessonTime.getDaysWithSameSchedule("normal"), 
+                  context,
+                  LessonTime.getDaysWithSameSchedule("normal"),
                   LessonTime.getLessonTimesForUI("normal"),
                 ),
                 const SizedBox(height: 16),
                 _buildDaySchedule(
-                  context, 
-                  LessonTime.getDaysWithSameSchedule("tuesday"), 
+                  context,
+                  LessonTime.getDaysWithSameSchedule("tuesday"),
                   LessonTime.getLessonTimesForUI("tuesday"),
                   specialHour: LessonTime.getSpecialHourInfo("tuesday"),
                 ),
                 const SizedBox(height: 16),
                 _buildDaySchedule(
-                  context, 
-                  LessonTime.getDaysWithSameSchedule("thursday"), 
+                  context,
+                  LessonTime.getDaysWithSameSchedule("thursday"),
                   LessonTime.getLessonTimesForUI("thursday"),
                   specialHour: LessonTime.getSpecialHourInfo("thursday"),
                 ),
                 const SizedBox(height: 16),
                 _buildDaySchedule(
-                  context, 
-                  LessonTime.getDaysWithSameSchedule("saturday"), 
+                  context,
+                  LessonTime.getDaysWithSameSchedule("saturday"),
                   LessonTime.getLessonTimesForUI("saturday"),
                 ),
               ],
@@ -135,7 +135,9 @@ class BellScheduleDialog extends StatelessWidget {
     );
   }
 
-  Widget _buildDaySchedule(BuildContext context, String title, List<(String, String, String)> times, {Map<String, String>? specialHour}) {
+  Widget _buildDaySchedule(
+      BuildContext context, String title, List<(String, String, String)> times,
+      {Map<String, String>? specialHour}) {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -146,18 +148,18 @@ class BellScheduleDialog extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: 8.0),
           decoration: BoxDecoration(
-            color: (isDark 
-                ? colorScheme.primaryContainer.withOpacity(0.2)
-                : colorScheme.primaryContainer.withOpacity(0.3)),
+            color: (isDark
+                ? colorScheme.primaryContainer.withAlpha((0.2 * 255).toInt())
+                : colorScheme.primaryContainer.withAlpha((0.3 * 255).toInt())),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Text(
             title,
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.bold,
-              color: colorScheme.primary,
-            ),
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.primary,
+                ),
           ),
         ),
         const SizedBox(height: 5),
@@ -168,18 +170,21 @@ class BellScheduleDialog extends StatelessWidget {
               Flexible(
                 fit: FlexFit.tight,
                 child: Column(
-                  children: times.take(3).map((time) => 
-                    _buildTimeRow(time.$1, time.$2, time.$3)
-                  ).toList(),
+                  children: times
+                      .take(3)
+                      .map((time) => _buildTimeRow(time.$1, time.$2, time.$3))
+                      .toList(),
                 ),
               ),
               const SizedBox(width: 8),
               Flexible(
                 fit: FlexFit.tight,
                 child: Column(
-                  children: times.skip(3).take(3).map((time) => 
-                    _buildTimeRow(time.$1, time.$2, time.$3)
-                  ).toList(),
+                  children: times
+                      .skip(3)
+                      .take(3)
+                      .map((time) => _buildTimeRow(time.$1, time.$2, time.$3))
+                      .toList(),
                 ),
               ),
             ],
@@ -191,10 +196,9 @@ class BellScheduleDialog extends StatelessWidget {
             margin: const EdgeInsets.only(top: 8),
             padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
             decoration: BoxDecoration(
-              color: (isDark 
-                  ? colorScheme.primaryContainer.withOpacity(0.2)
-                  : colorScheme.primaryContainer.withOpacity(0.3)),
-              borderRadius: BorderRadius.circular(8),
+                            color: (isDark 
+                                ? colorScheme.primaryContainer.withAlpha((0.2 * 255).toInt())
+                                : colorScheme.primaryContainer.withAlpha((0.3 * 255).toInt())),              borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
               "${specialHour['name']}: ${specialHour['time']}",
@@ -207,4 +211,4 @@ class BellScheduleDialog extends StatelessWidget {
       ],
     );
   }
-} 
+}

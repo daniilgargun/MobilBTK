@@ -16,7 +16,6 @@ class DeveloperAdsWidget extends StatefulWidget {
 
 class _DeveloperAdsWidgetState extends State<DeveloperAdsWidget> with SingleTickerProviderStateMixin {
   bool _isLoading = false;
-  bool _isMounted = true;
   late AnimationController _controller;
   late Animation<double> _scaleAnimation;
   late Animation<double> _opacityAnimation;
@@ -55,13 +54,12 @@ class _DeveloperAdsWidgetState extends State<DeveloperAdsWidget> with SingleTick
   @override
   void dispose() {
     _controller.dispose();
-    _isMounted = false;
     super.dispose();
   }
 
   Future<void> _loadCookieCount() async {
     final prefs = await SharedPreferences.getInstance();
-    if (_isMounted) {
+    if (mounted) {
       setState(() {
         _cookieCount = prefs.getInt('cookie_count') ?? 0;
       });
@@ -79,7 +77,7 @@ class _DeveloperAdsWidgetState extends State<DeveloperAdsWidget> with SingleTick
     });
     _controller.forward().then((_) {
       Future.delayed(const Duration(seconds: 2), () {
-        if (_isMounted) {
+        if (mounted) {
           Navigator.pop(context);
         }
       });
@@ -87,7 +85,7 @@ class _DeveloperAdsWidgetState extends State<DeveloperAdsWidget> with SingleTick
   }
 
   Future<void> _showRewardedAd() async {
-    if (!_isMounted) return;
+    if (!mounted) return;
 
     setState(() {
       _isLoading = true;
@@ -96,7 +94,7 @@ class _DeveloperAdsWidgetState extends State<DeveloperAdsWidget> with SingleTick
     try {
       final result = await AdsService().showRewardedAd();
       
-      if (!_isMounted) return;
+      if (!mounted) return;
 
       if (result) {
         setState(() {
@@ -105,13 +103,11 @@ class _DeveloperAdsWidgetState extends State<DeveloperAdsWidget> with SingleTick
         await _saveCookieCount();
         
         // Уведомляем родительский виджет об обновлении счетчика
-        if (widget.onCookieCountUpdated != null) {
-          widget.onCookieCountUpdated!();
-        }
+        widget.onCookieCountUpdated?.call();
         
         _showThankYouAnimation();
       } else {
-        if (_isMounted) {
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Не удалось загрузить рекламу. Попробуйте позже.'),
@@ -121,7 +117,7 @@ class _DeveloperAdsWidgetState extends State<DeveloperAdsWidget> with SingleTick
         }
       }
     } catch (e) {
-      if (_isMounted) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Произошла ошибка: $e'),
@@ -130,7 +126,7 @@ class _DeveloperAdsWidgetState extends State<DeveloperAdsWidget> with SingleTick
         );
       }
     } finally {
-      if (_isMounted) {
+      if (mounted) {
         setState(() {
           _isLoading = false;
         });
@@ -175,7 +171,7 @@ class _DeveloperAdsWidgetState extends State<DeveloperAdsWidget> with SingleTick
                         width: 100,
                         height: 100,
                         decoration: BoxDecoration(
-                          color: Colors.amber.withOpacity(0.2),
+                          color: Colors.amber.withAlpha((0.2 * 255).toInt()),
                           shape: BoxShape.circle,
                         ),
                       ),
@@ -217,11 +213,11 @@ class _DeveloperAdsWidgetState extends State<DeveloperAdsWidget> with SingleTick
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                       decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surface.withOpacity(0.7),
+                        color: Theme.of(context).colorScheme.surface.withAlpha((0.7 * 255).toInt()),
                         borderRadius: BorderRadius.circular(12),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
+                            color: Colors.black.withAlpha((0.1 * 255).toInt()),
                             blurRadius: 4,
                             offset: const Offset(0, 2),
                           ),
@@ -266,7 +262,7 @@ class _DeveloperAdsWidgetState extends State<DeveloperAdsWidget> with SingleTick
               Container(
                 padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.7),
+                  color: Theme.of(context).colorScheme.primaryContainer.withAlpha((0.7 * 255).toInt()),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Column(
@@ -306,4 +302,4 @@ class _DeveloperAdsWidgetState extends State<DeveloperAdsWidget> with SingleTick
       ),
     );
   }
-} 
+}

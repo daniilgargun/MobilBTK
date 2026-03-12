@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Цвета для виджета (темная тема) -->
+    <color name="widget_background">#1E1E1E</color>
+    <color name="widget_primary">#64B5F6</color>
+    <color name="widget_secondary">#FFB74D</color>
+    <color name="widget_text_primary">#FFFFFF</color>
+    <color name="widget_text_secondary">#B0B0B0</color>
+    <color name="widget_day_background">#1565C0</color>
+    <color name="widget_special_background">#E65100</color>
+    <color name="widget_lesson_background">#2A2A2A</color>
+    <color name="widget_border">#404040</color>
+    
+    <!-- Цвета для текущей пары -->
+    <color name="widget_current_lesson_background">#1B5E20</color>
+    <color name="widget_current_lesson_border">#4CAF50</color>
+</resources> 

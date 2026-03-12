@@ -6,15 +6,17 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/schedule_provider.dart';
+import '../providers/personalization_provider.dart';
 import '../models/schedule_model.dart';
-import 'package:intl/intl.dart';
+import '../models/personalization_settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/schedule_item_card.dart';
 import '../widgets/bell_schedule_dialog.dart';
 import '../widgets/error_snackbar.dart';
 import 'package:share_plus/share_plus.dart';
 import '../services/connectivity_service.dart';
-import '../main.dart'; // Импортируем main.dart
+import '../services/date_service.dart';
+import 'package:flutter/foundation.dart';
 
 class ScheduleScreen extends StatefulWidget {
   const ScheduleScreen({super.key});
@@ -33,10 +35,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   static const Duration _animationDuration = Duration(milliseconds: 300);
   bool _hasShownOfflineWarning = false;
   bool _isLoading = false;
-  
+  bool _isShareButtonPressed = false;
+  bool _isRefreshButtonPressed = false;
+
   // Кэш для отфильтрованных данных
   Map<String, List<ScheduleItem>> _filteredCache = {};
-  
+
   // Подготовленные данные для всех дат
   Map<String, List<ScheduleItem>> _preparedData = {};
 
@@ -71,112 +75,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   Future<void> _saveSearchQuery(String query) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_searchQueryKey, query);
-    
-    // Проверяем на открытие мини-игры через поиск
-    if (query.toLowerCase() == 'minigame') {
-      await prefs.setBool('minigame_unlocked', true);
-      
-      // Показываем диалог и открываем мини-игру
-      if (mounted) {
-        _showMinigameUnlockedDialog();
-      }
+    // Обновляем виджет при смене запроса
+    if (_scheduleProvider != null) {
+      await _scheduleProvider!.updateHomeWidget();
     }
   }
 
-  // Показываем диалог о разблокировке мини-игры
-  void _showMinigameUnlockedDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('🎮 Мини-игра разблокирована!'),
-        content: const Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'Поздравляем! Вы разблокировали мини-игру!',
-              style: TextStyle(fontSize: 16),
-            ),
-            SizedBox(height: 20),
-            Text(
-              'Мини-игра доступна через меню навигации.',
-              style: TextStyle(fontSize: 14),
-            ),
-            SizedBox(height: 16),
-            Text(
-              'Для появления мини-игры может потребоваться перезапуск приложения.',
-              style: TextStyle(fontSize: 13, fontStyle: FontStyle.italic, color: Colors.grey),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              // Закрываем диалог
-              Navigator.pop(context);
-              
-              // Принудительно обновляем навигацию в MyApp
-              final state = context.findAncestorStateOfType<MyHomePageState>();
-              if (state != null) {
-                state.checkAndUpdateNavigation();
-              }
-            },
-            child: const Text('Круто!'),
-          ),
-        ],
-      ),
-    );
-  }
-
   String _formatDate(String dateStr) {
-    final parts = dateStr.split('-');
-    if (parts.length != 2) return dateStr;
-
-    final day = int.parse(parts[0]);
-    final monthStr = parts[1].toLowerCase().trim();
-    
-    final monthNames = {
-      'янв': 'января',
-      'фев': 'февраля',
-      'февр': 'февраля',
-      'март': 'марта',
-      'мар': 'марта',
-      'апр': 'апреля',
-      'май': 'мая',
-      'июн': 'июня',
-      'июл': 'июля',
-      'авг': 'августа',
-      'сен': 'сентября',
-      'окт': 'октября',
-      'ноя': 'ноября',
-      'дек': 'декабря',
-    };
-
-    final month = monthNames[monthStr] ?? monthStr;
-    final weekday = _getWeekday(day, monthStr);
-    
-    return '$day $month ($weekday)';
-  }
-
-  String _getWeekday(int day, String monthStr) {
-    // Определяем месяц
-    final monthMap = {
-      'янв': 1, 'фев': 2, 
-      'март': 3, 'мар': 3,
-      'апр': 4, 'май': 5,
-      'июн': 6, 'июл': 7,
-      'авг': 8, 'сен': 9,
-      'окт': 10, 'ноя': 11,
-      'дек': 12
-    };
-    
-    final month = monthMap[monthStr.toLowerCase()] ?? 1;
-    final now = DateTime.now();
-    final year = month < now.month ? now.year + 1 : now.year;
-    final date = DateTime(year, month, day);
-    
-    final weekdays = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'];
-    return weekdays[date.weekday - 1];
+    return DateService.formatDateStringWithWeekday(dateStr);
   }
 
   // Получает случайные подсказки из реальных данных
@@ -185,50 +91,52 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     if (provider.searchSettings.useFavorites) {
       return provider.getFavoriteSuggestions();
     }
-    
+
     final suggestions = <String>{};
     final random = DateTime.now().millisecondsSinceEpoch;
-    
+
     // Получаем реальные данные
     if (provider.scheduleData != null && provider.scheduleData!.isNotEmpty) {
       final allItems = <ScheduleItem>[];
-      
+
       // Собираем все уроки
       for (var daySchedule in provider.scheduleData!.values) {
         for (var groupSchedule in daySchedule.values) {
           allItems.addAll(groupSchedule);
         }
       }
-      
+
       if (allItems.isEmpty) return [];
 
       // Добавляем случайную группу
       if (provider.groups.isNotEmpty && provider.searchSettings.showGroups) {
         suggestions.add(provider.groups[random % provider.groups.length]);
       }
-      
+
       // Добавляем случайного преподавателя
-      if (provider.teachers.isNotEmpty && provider.searchSettings.showTeachers) {
-        suggestions.add(provider.teachers[(random ~/ 2) % provider.teachers.length]);
+      if (provider.teachers.isNotEmpty &&
+          provider.searchSettings.showTeachers) {
+        suggestions
+            .add(provider.teachers[(random ~/ 2) % provider.teachers.length]);
       }
-      
+
       // Добавляем случайный кабинет
       if (provider.searchSettings.showClassrooms) {
-      final classrooms = allItems.map((e) => e.classroom).toSet().toList();
-      if (classrooms.isNotEmpty) {
-        suggestions.add(classrooms[(random ~/ 3) % classrooms.length]);
+        final classrooms = allItems.map((e) => e.classroom).toSet().toList();
+        if (classrooms.isNotEmpty) {
+          suggestions.add(classrooms[(random ~/ 3) % classrooms.length]);
         }
       }
-      
+
       // Добавляем случайный предмет
       if (provider.searchSettings.showSubjects) {
-      final subjects = allItems.map((e) => e.subject).toSet().toList();
-      if (subjects.isNotEmpty) {
-        suggestions.add(subjects[(random ~/ 4) % subjects.length]);
+        final subjects = allItems.map((e) => e.subject).toSet().toList();
+        if (subjects.isNotEmpty) {
+          suggestions.add(subjects[(random ~/ 4) % subjects.length]);
         }
       }
     }
-    
+
     // Возвращаем до 7 случайных подсказок
     return suggestions.take(7).toList();
   }
@@ -237,7 +145,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   Widget _buildSearchChip(String label) {
     return ActionChip(
       label: Text(label),
-      backgroundColor: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.7),
+      backgroundColor: Theme.of(context)
+          .colorScheme
+          .surfaceContainerHighest
+          .withAlpha((0.7 * 255).toInt()),
       onPressed: () {
         setState(() {
           _searchController.text = label;
@@ -350,8 +261,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           _formatDate(date),
           key: ValueKey<String>(date), // Важно для анимации
           style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-            fontWeight: FontWeight.bold,
-          ),
+                fontWeight: FontWeight.bold,
+              ),
           textAlign: TextAlign.left,
         ),
       ),
@@ -368,18 +279,22 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface.withOpacity(0.8),
+            color: Theme.of(context)
+                .colorScheme
+                .surface
+                .withAlpha((0.8 * 255).toInt()),
             borderRadius: BorderRadius.circular(20),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.1),
+                color: Colors.black.withAlpha((0.1 * 255).toInt()),
                 blurRadius: 4,
                 offset: const Offset(0, 2),
               ),
             ],
           ),
           child: Row(
-            mainAxisSize: MainAxisSize.min, // Это сделает контейнер по размеру содержимого
+            mainAxisSize: MainAxisSize
+                .min, // Это сделает контейнер по размеру содержимого
             mainAxisAlignment: MainAxisAlignment.center,
             children: List.generate(dates.length, (index) {
               return AnimatedContainer(
@@ -391,7 +306,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                   shape: BoxShape.circle,
                   color: _currentPage == index
                       ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context).colorScheme.surfaceVariant,
+                      : Theme.of(context).colorScheme.surfaceContainerHighest,
                 ),
               );
             }),
@@ -404,7 +319,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   // Функция для форматирования текста при отправке расписания
   String _formatScheduleForSharing(List<ScheduleItem> lessons, String date) {
     final buffer = StringBuffer();
-    
+
     if (lessons.isNotEmpty) {
       if (_searchQuery.isNotEmpty) {
         buffer.writeln('🔍 Результаты поиска: $_searchQuery\n');
@@ -413,7 +328,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         buffer.writeln('📚 Расписание группы $group\n');
       }
     }
-    
+
     buffer.writeln('📅 ${_formatDate(date)}');
     buffer.writeln('═════════════════════\n');
 
@@ -435,24 +350,19 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   // Преобразует строку с датой в нормальный DateTime
   // Например из "01-март" делает DateTime
   DateTime _parseDate(String dateStr) {
-    final parts = dateStr.split('-');
-    if (parts.length != 2) return DateTime.now();
-
-    final day = int.parse(parts[0]);
-    final monthMap = {
-      'янв': 1, 'фев': 2, 'мар': 3, 'апр': 4,
-      'май': 5, 'июн': 6, 'июл': 7, 'авг': 8,
-      'сен': 9, 'окт': 10, 'ноя': 11, 'дек': 12
-    };
-    final month = monthMap[parts[1].toLowerCase()] ?? 1;
-    
-    return DateTime(DateTime.now().year, month, day);
+    try {
+      return DateService.parseScheduleDate(dateStr);
+    } catch (e) {
+      debugPrint('Ошибка парсинга даты: $e');
+      return DateTime.now();
+    }
   }
 
   // Проверяет, есть ли расписание для текущего фильтра
-  bool _hasScheduleForFilter(Map<String, Map<String, List<ScheduleItem>>> daySchedule) {
+  bool _hasScheduleForFilter(
+      Map<String, Map<String, List<ScheduleItem>>> daySchedule) {
     if (_searchQuery.isEmpty) return true;
-    
+
     final query = _searchQuery.toLowerCase();
     for (var groupSchedule in daySchedule.values) {
       for (var lessons in groupSchedule.values) {
@@ -472,23 +382,23 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   // Подготавливаем данные для всех дат
   void _prepareData(ScheduleProvider provider) {
     if (provider.scheduleData == null) return;
-    
+
     _preparedData.clear();
     _filteredCache.clear();
-    
+
     for (var date in provider.scheduleData!.keys) {
       final daySchedule = provider.scheduleData![date]!;
       final allLessons = <ScheduleItem>[];
-      
+
       for (var groupLessons in daySchedule.values) {
         allLessons.addAll(groupLessons.toList());
       }
-      
+
       // Сортируем по номеру пары
       allLessons.sort((a, b) => a.lessonNumber.compareTo(b.lessonNumber));
       _preparedData[date] = allLessons;
     }
-    
+
     // Проверяем, не вышли ли мы за пределы доступных дней после обновления данных
     if (provider.scheduleData!.isNotEmpty) {
       if (_currentPage >= provider.scheduleData!.length) {
@@ -506,26 +416,26 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   // Получаем отфильтрованные данные с использованием кэша
   List<ScheduleItem> _getFilteredLessons(String date, String query) {
     final cacheKey = '${date}_$query';
-    
+
     if (_filteredCache.containsKey(cacheKey)) {
       return _filteredCache[cacheKey]!;
     }
-    
+
     final allLessons = _preparedData[date] ?? [];
-    
+
     if (query.isEmpty) {
       _filteredCache[cacheKey] = allLessons;
       return allLessons;
     }
-    
+
     final filteredLessons = allLessons.where((lesson) {
       final lowercaseQuery = query.toLowerCase();
       return lesson.group.toLowerCase().contains(lowercaseQuery) ||
-             lesson.teacher.toLowerCase().contains(lowercaseQuery) ||
-             lesson.classroom.toLowerCase().contains(lowercaseQuery) ||
-             lesson.subject.toLowerCase().contains(lowercaseQuery);
+          lesson.teacher.toLowerCase().contains(lowercaseQuery) ||
+          lesson.classroom.toLowerCase().contains(lowercaseQuery) ||
+          lesson.subject.toLowerCase().contains(lowercaseQuery);
     }).toList();
-    
+
     _filteredCache[cacheKey] = filteredLessons;
     return filteredLessons;
   }
@@ -539,19 +449,19 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   Widget build(BuildContext context) {
     // Определяем текущую тему
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    
+
     // Цвета для кнопки обновления (делаем более прозрачными)
-    final buttonColor = isDarkMode 
-        ? const Color(0xFF194874).withOpacity(0.5)  // Увеличили прозрачность
-        : Colors.white.withOpacity(0.4);  // Увеличили прозрачность
-    
+    final buttonColor = isDarkMode
+        ? const Color(0xFF194874)
+            .withAlpha((0.5 * 255).toInt()) // Увеличили прозрачность
+        : Colors.white.withAlpha((0.4 * 255).toInt()); // Увеличили прозрачность
+
     // Цвета для индикаторов
-    final activeIndicatorColor = isDarkMode 
-        ? Colors.white 
-        : const Color(0xFF194874);
-    final inactiveIndicatorColor = isDarkMode 
-        ? Colors.white.withOpacity(0.3)
-        : const Color(0xFF194874).withOpacity(0.3);
+    final activeIndicatorColor =
+        isDarkMode ? Colors.white : const Color(0xFF194874);
+    final inactiveIndicatorColor = isDarkMode
+        ? Colors.white.withAlpha((0.3 * 255).toInt())
+        : const Color(0xFF194874).withAlpha((0.3 * 255).toInt());
 
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.surface,
@@ -573,8 +483,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       body: Consumer<ScheduleProvider>(
         builder: (context, provider, child) {
           // Подготавливаем данные при первой загрузке или обновлении расписания
-          if (provider.scheduleData != null && 
-             (_preparedData.isEmpty || provider.scheduleData!.length != _preparedData.length)) {
+          if (provider.scheduleData != null &&
+              (_preparedData.isEmpty ||
+                  provider.scheduleData!.length != _preparedData.length)) {
             _prepareData(provider);
           }
 
@@ -589,9 +500,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           if (provider.errorMessage != null) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               final message = provider.errorMessage!;
-              final isWarning = message.contains("Новых дней") || 
-                              message.contains("Слишком частые запросы");
-              
+              final isWarning = message.contains("Новых дней") ||
+                  message.contains("Слишком частые запросы");
+
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Row(
@@ -627,28 +538,28 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           }
 
           // Проверяем, есть ли данные в fullScheduleData, но нет в scheduleData
-          final hasArchiveButNoCurrentData = 
-              provider.fullScheduleData != null && 
-              provider.fullScheduleData!.isNotEmpty && 
+          final hasArchiveButNoCurrentData = provider.fullScheduleData !=
+                  null &&
+              provider.fullScheduleData!.isNotEmpty &&
               (provider.scheduleData == null || provider.scheduleData!.isEmpty);
 
           return Stack(
             children: [
               // Основной контент
-              if (provider.isLoading) (
-                Center(
+              if (provider.isLoading)
+                (Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       const CircularProgressIndicator(),
                       const SizedBox(height: 16),
-                      if (provider.status != null)
-                        Text(provider.status!),
+                      if (provider.status != null) Text(provider.status!),
                     ],
                   ),
-                )
-              ) else if (provider.scheduleData == null || provider.scheduleData!.isEmpty) (
-                Center(
+                ))
+              else if (provider.scheduleData == null ||
+                  provider.scheduleData!.isEmpty)
+                (Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
@@ -670,8 +581,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                           icon: const Icon(Icons.sync_problem),
                           label: const Text('Восстановить расписание'),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: Theme.of(context).colorScheme.primary,
-                            foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                            backgroundColor:
+                                Theme.of(context).colorScheme.primary,
+                            foregroundColor:
+                                Theme.of(context).colorScheme.onPrimary,
                           ),
                         ),
                       if (!provider.isOffline && !hasArchiveButNoCurrentData)
@@ -682,22 +595,24 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                       if (provider.isOffline)
                         Text(
                           'Подключитесь к интернету для загрузки расписания',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: Theme.of(context).colorScheme.error,
-                          ),
+                          style:
+                              Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    color: Theme.of(context).colorScheme.error,
+                                  ),
                           textAlign: TextAlign.center,
                         ),
                     ],
                   ),
-                )
-              ) else (
-                Column(
+                ))
+              else
+                (Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _buildSearchField(),
                     AnimatedSwitcher(
                       duration: const Duration(milliseconds: 300),
-                      child: _buildDateHeader(provider.scheduleData!.keys.toList()[_currentPage]),
+                      child: _buildDateHeader(
+                          provider.scheduleData!.keys.toList()[_currentPage]),
                     ),
                     Expanded(
                       child: Stack(
@@ -711,42 +626,61 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                             },
                             itemCount: provider.scheduleData!.length,
                             itemBuilder: (context, index) {
-                              final date = provider.scheduleData!.keys.toList()[index];
-                              final filteredLessons = _getFilteredLessons(date, _searchQuery);
+                              final date =
+                                  provider.scheduleData!.keys.toList()[index];
+                              final filteredLessons =
+                                  _getFilteredLessons(date, _searchQuery);
 
                               return Stack(
                                 children: [
                                   if (filteredLessons.isEmpty)
                                     Center(
                                       child: Column(
-                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
                                         children: [
                                           Icon(
                                             Icons.event_busy,
                                             size: 64,
-                                            color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .primary
+                                                .withAlpha((0.5 * 255).toInt()),
                                           ),
                                           const SizedBox(height: 16),
                                           Text(
-                                            _searchQuery.isEmpty 
+                                            _searchQuery.isEmpty
                                                 ? 'Нет расписания на этот день'
                                                 : 'Нет расписания по вашему запросу',
-                                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                                            ),
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .titleMedium
+                                                ?.copyWith(
+                                                  color: Theme.of(context)
+                                                      .colorScheme
+                                                      .onSurface
+                                                      .withAlpha(
+                                                          (0.7 * 255).toInt()),
+                                                ),
                                           ),
                                         ],
                                       ),
                                     )
                                   else
                                     AnimatedSwitcher(
-                                      duration: const Duration(milliseconds: 300),
-                                      transitionBuilder: (Widget child, Animation<double> animation) {
+                                      duration:
+                                          const Duration(milliseconds: 300),
+                                      transitionBuilder: (Widget child,
+                                          Animation<double> animation) {
                                         return FadeTransition(
                                           opacity: animation,
                                           child: SlideTransition(
                                             position: Tween<Offset>(
-                                              begin: Offset(_currentPage > index ? -1.0 : 1.0, 0.0),
+                                              begin: Offset(
+                                                  _currentPage > index
+                                                      ? -1.0
+                                                      : 1.0,
+                                                  0.0),
                                               end: Offset.zero,
                                             ).animate(CurvedAnimation(
                                               parent: animation,
@@ -756,20 +690,113 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                                           ),
                                         );
                                       },
-                                      child: ListView.builder(
-                                        key: PageStorageKey('schedule_list_$date'),
-                                        itemCount: filteredLessons.length,
-                                        padding: _listPadding,
-                                        cacheExtent: 1000, // Увеличиваем кэш для более плавной прокрутки
-                                        itemBuilder: (context, index) {
-                                          if (!mounted) return const SizedBox();
-                                          
-                                          return ScheduleItemCard(
-                                            key: ValueKey('${filteredLessons[index].hashCode}_$index'),
-                                            item: filteredLessons[index],
-                                            index: index,
-                                            date: _parseDate(date),
-                                          );
+                                      child: Consumer<PersonalizationProvider>(
+                                        builder: (context,
+                                            personalizationProvider, _) {
+                                          final displayFormat =
+                                              personalizationProvider
+                                                  .settings.displayFormat;
+
+                                          if (displayFormat ==
+                                              DisplayFormat.grid) {
+                                            // Сетка
+                                            return GridView.builder(
+                                              key: PageStorageKey(
+                                                  'schedule_grid_$date'),
+                                              gridDelegate:
+                                                  const SliverGridDelegateWithFixedCrossAxisCount(
+                                                crossAxisCount: 2,
+                                                crossAxisSpacing: 4,
+                                                mainAxisSpacing: 4,
+                                                childAspectRatio: 1.15,
+                                              ),
+                                              padding: const EdgeInsets.all(4),
+                                              cacheExtent: 1000,
+                                              itemCount: filteredLessons.length,
+                                              itemBuilder: (context, index) {
+                                                if (!mounted)
+                                                  return const SizedBox();
+
+                                                return TweenAnimationBuilder<
+                                                    double>(
+                                                  tween: Tween(
+                                                      begin: 0.0, end: 1.0),
+                                                  duration: Duration(
+                                                      milliseconds:
+                                                          300 + (index * 50)),
+                                                  curve: Curves.easeOut,
+                                                  builder:
+                                                      (context, value, child) {
+                                                    return Opacity(
+                                                      opacity: value,
+                                                      child:
+                                                          Transform.translate(
+                                                        offset: Offset(0,
+                                                            20 * (1 - value)),
+                                                        child: child,
+                                                      ),
+                                                    );
+                                                  },
+                                                  child: RepaintBoundary(
+                                                    child: ScheduleItemCard(
+                                                      key: ValueKey(
+                                                          '${filteredLessons[index].hashCode}_$index'),
+                                                      item: filteredLessons[
+                                                          index],
+                                                      index: index,
+                                                      date: _parseDate(date),
+                                                      isCompact: true,
+                                                    ),
+                                                  ),
+                                                );
+                                              },
+                                            );
+                                          } else {
+                                            // Список
+                                            return ListView.builder(
+                                              key: PageStorageKey(
+                                                  'schedule_list_$date'),
+                                              itemCount: filteredLessons.length,
+                                              padding: _listPadding,
+                                              cacheExtent: 1000,
+                                              itemBuilder: (context, index) {
+                                                if (!mounted)
+                                                  return const SizedBox();
+
+                                                return TweenAnimationBuilder<
+                                                    double>(
+                                                  tween: Tween(
+                                                      begin: 0.0, end: 1.0),
+                                                  duration: Duration(
+                                                      milliseconds:
+                                                          300 + (index * 50)),
+                                                  curve: Curves.easeOut,
+                                                  builder:
+                                                      (context, value, child) {
+                                                    return Opacity(
+                                                      opacity: value,
+                                                      child:
+                                                          Transform.translate(
+                                                        offset: Offset(0,
+                                                            20 * (1 - value)),
+                                                        child: child,
+                                                      ),
+                                                    );
+                                                  },
+                                                  child: RepaintBoundary(
+                                                    child: ScheduleItemCard(
+                                                      key: ValueKey(
+                                                          '${filteredLessons[index].hashCode}_$index'),
+                                                      item: filteredLessons[
+                                                          index],
+                                                      index: index,
+                                                      date: _parseDate(date),
+                                                    ),
+                                                  ),
+                                                );
+                                              },
+                                            );
+                                          }
                                         },
                                       ),
                                     ),
@@ -777,72 +804,94 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                               );
                             },
                           ),
-                          
+
                           // Индикатор страниц как отдельный слой поверх всего содержимого
-                          if (provider.scheduleData != null && provider.scheduleData!.isNotEmpty)
+                          if (provider.scheduleData != null &&
+                              provider.scheduleData!.isNotEmpty)
                             Positioned(
                               bottom: 20,
                               left: 0,
                               right: 0,
                               child: Center(
                                 child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 16, vertical: 8),
                                   decoration: BoxDecoration(
-                                    color: isDarkMode 
-                                      ? Colors.black.withOpacity(0.6)
-                                      : Colors.white.withOpacity(0.6),
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .surface
+                                        .withOpacity(0.8),
                                     borderRadius: BorderRadius.circular(30),
                                   ),
                                   child: Row(
                                     mainAxisSize: MainAxisSize.min,
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: List.generate(
-                                      provider.scheduleData!.keys.length > 10 
+                                      provider.scheduleData!.keys.length > 10
                                           ? 10
                                           : provider.scheduleData!.keys.length,
                                       (index) {
                                         // Если дней больше 10, показываем только ближайшие к текущему
-                                        if (provider.scheduleData!.keys.length > 10) {
+                                        if (provider.scheduleData!.keys.length >
+                                            10) {
                                           // Вычисляем диапазон отображаемых точек
                                           int start = _currentPage - 4;
                                           if (start < 0) start = 0;
-                                          if (start > provider.scheduleData!.keys.length - 10) 
-                                            start = provider.scheduleData!.keys.length - 10;
-                                          
+                                          if (start >
+                                              provider.scheduleData!.keys
+                                                      .length -
+                                                  10)
+                                            start = provider
+                                                    .scheduleData!.keys.length -
+                                                10;
+
                                           // Если индекс вне диапазона, не показываем
-                                          if (index + start >= provider.scheduleData!.keys.length) 
+                                          if (index + start >=
+                                              provider
+                                                  .scheduleData!.keys.length)
                                             return const SizedBox.shrink();
-                                          
+
                                           // Проверяем, соответствует ли точка текущей странице
-                                          bool isCurrentPage = (index + start) == _currentPage;
-                                          
+                                          bool isCurrentPage =
+                                              (index + start) == _currentPage;
+
                                           return AnimatedContainer(
-                                            duration: const Duration(milliseconds: 300),
-                                            margin: const EdgeInsets.symmetric(horizontal: 4),
+                                            duration: const Duration(
+                                                milliseconds: 300),
+                                            margin: const EdgeInsets.symmetric(
+                                                horizontal: 4),
                                             height: 12,
                                             width: 12,
                                             decoration: BoxDecoration(
-                                              color: isCurrentPage 
-                                                ? const Color(0xFF2195F1) // Синий цвет для активной точки
-                                                : isDarkMode
-                                                  ? const Color(0xFF12293F).withOpacity(0.5) // Темная тема
-                                                  : const Color(0xFFE3E3E3), // Светлая тема
+                                              color: isCurrentPage
+                                                  ? Theme.of(context)
+                                                      .colorScheme
+                                                      .primary
+                                                  : Theme.of(context)
+                                                      .colorScheme
+                                                      .surfaceVariant
+                                                      .withOpacity(0.5),
                                               shape: BoxShape.circle,
                                             ),
                                           );
                                         } else {
                                           // Если дней меньше 10, показываем все точки
                                           return AnimatedContainer(
-                                            duration: const Duration(milliseconds: 300),
-                                            margin: const EdgeInsets.symmetric(horizontal: 4),
+                                            duration: const Duration(
+                                                milliseconds: 300),
+                                            margin: const EdgeInsets.symmetric(
+                                                horizontal: 4),
                                             height: 12,
                                             width: 12,
                                             decoration: BoxDecoration(
-                                              color: _currentPage == index 
-                                                ? const Color(0xFF2195F1) // Синий цвет для активной точки
-                                                : isDarkMode
-                                                  ? const Color(0xFF194874).withOpacity(0.5) // Темная тема
-                                                  : const Color(0xFFE3E3E3), // Светлая тема
+                                              color: _currentPage == index
+                                                  ? Theme.of(context)
+                                                      .colorScheme
+                                                      .primary
+                                                  : Theme.of(context)
+                                                      .colorScheme
+                                                      .surfaceVariant
+                                                      .withOpacity(0.5),
                                               shape: BoxShape.circle,
                                             ),
                                           );
@@ -857,57 +906,88 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                       ),
                     ),
                   ],
-                )
-              ),
+                )),
             ],
           );
         },
       ),
-      floatingActionButton: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Кнопка поделиться
-          if (_searchQuery.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8.0),
-              child: FloatingActionButton(
-                heroTag: "shareBtn",
-                onPressed: _shareSchedule,
-                backgroundColor: Theme.of(context).brightness == Brightness.dark
-                    ? const Color(0xFF194874).withOpacity(0.5)  // Увеличили прозрачность
-                    : const Color(0xFFFFFFFF).withOpacity(0.4),  // Увеличили прозрачность
-                elevation: 1,  // Уменьшили тень
-                child: Icon(
-                  Icons.share,
-                  color: Theme.of(context).brightness == Brightness.dark
-                      ? Colors.white
-                      : const Color(0xFF194874),
+      floatingActionButton: Builder(
+        builder: (fabContext) {
+          final colorScheme = Theme.of(fabContext).colorScheme;
+          final shareBackground = colorScheme.primaryContainer.withOpacity(0.8);
+          final shareForeground = colorScheme.onPrimaryContainer;
+          final refreshEnabledBackground =
+              colorScheme.primaryContainer.withOpacity(0.8);
+          final refreshEnabledForeground = colorScheme.onPrimaryContainer;
+          final refreshDisabledBackground =
+              colorScheme.surfaceVariant.withOpacity(0.5);
+          final refreshDisabledForeground = colorScheme.onSurfaceVariant;
+
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Кнопка поделиться
+              if (_searchQuery.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8.0),
+                  child: GestureDetector(
+                    onTapDown: (_) =>
+                        setState(() => _isShareButtonPressed = true),
+                    onTapUp: (_) =>
+                        setState(() => _isShareButtonPressed = false),
+                    onTapCancel: () =>
+                        setState(() => _isShareButtonPressed = false),
+                    child: AnimatedScale(
+                      scale: _isShareButtonPressed ? 0.85 : 1.0,
+                      duration: const Duration(milliseconds: 150),
+                      curve: Curves.easeInOutCubic,
+                      child: FloatingActionButton(
+                        heroTag: "shareBtn",
+                        onPressed: _shareSchedule,
+                        backgroundColor: shareBackground,
+                        foregroundColor: shareForeground,
+                        elevation: 1,
+                        child: const Icon(Icons.share),
+                      ),
+                    ),
+                  ),
                 ),
+
+              // Кнопка обновления
+              Consumer<ScheduleProvider>(
+                builder: (context, provider, child) {
+                  final isOffline = provider.isOffline;
+                  return GestureDetector(
+                    onTapDown: (_) =>
+                        setState(() => _isRefreshButtonPressed = true),
+                    onTapUp: (_) =>
+                        setState(() => _isRefreshButtonPressed = false),
+                    onTapCancel: () =>
+                        setState(() => _isRefreshButtonPressed = false),
+                    child: AnimatedScale(
+                      scale: _isRefreshButtonPressed ? 0.85 : 1.0,
+                      duration: const Duration(milliseconds: 150),
+                      curve: Curves.easeInOutCubic,
+                      child: FloatingActionButton(
+                        heroTag: "refreshBtn",
+                        onPressed:
+                            isOffline ? null : () => provider.updateSchedule(),
+                        backgroundColor: isOffline
+                            ? refreshDisabledBackground
+                            : refreshEnabledBackground,
+                        foregroundColor: isOffline
+                            ? refreshDisabledForeground
+                            : refreshEnabledForeground,
+                        elevation: 1,
+                        child: const Icon(Icons.refresh),
+                      ),
+                    ),
+                  );
+                },
               ),
-            ),
-          
-          // Кнопка обновления
-          Consumer<ScheduleProvider>(
-            builder: (context, provider, child) {
-              return FloatingActionButton(
-                heroTag: "refreshBtn",
-                onPressed: provider.isOffline ? null : () => provider.updateSchedule(),
-                backgroundColor: provider.isOffline 
-                    ? Colors.grey.withOpacity(0.5)  // Увеличили прозрачность для неактивной кнопки
-                    : (Theme.of(context).brightness == Brightness.dark
-                        ? const Color(0xFF194874).withOpacity(0.5)  // Увеличили прозрачность
-                        : const Color(0xFFFFFFFF).withOpacity(0.4)),  // Увеличили прозрачность
-                elevation: 1,  // Уменьшили тень
-                child: Icon(
-                  Icons.refresh,
-                  color: Theme.of(context).brightness == Brightness.dark
-                      ? Colors.white
-                      : const Color(0xFF194874),
-                ),
-              );
-            },
-          ),
-        ],
+            ],
+          );
+        },
       ),
     );
   }
@@ -919,7 +999,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     _filteredCache.clear();
     _preparedData.clear();
     _hasShownOfflineWarning = false;
-    
+
     // Удаляем слушатель при уничтожении виджета
     _scheduleProvider?.removeListener(_onScheduleDataChanged);
     super.dispose();
@@ -942,7 +1022,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       final date = dates[_currentPage];
       final daySchedule = provider.scheduleData![date]!;
       final allLessons = <ScheduleItem>[];
-      
+
       for (var groupLessons in daySchedule.values) {
         allLessons.addAll(groupLessons.toList());
       }
@@ -950,9 +1030,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       final filteredLessons = allLessons.where((lesson) {
         final query = _searchQuery.toLowerCase();
         return lesson.group.toLowerCase().contains(query) ||
-               lesson.teacher.toLowerCase().contains(query) ||
-               lesson.classroom.toLowerCase().contains(query) ||
-               lesson.subject.toLowerCase().contains(query);
+            lesson.teacher.toLowerCase().contains(query) ||
+            lesson.classroom.toLowerCase().contains(query) ||
+            lesson.subject.toLowerCase().contains(query);
       }).toList();
 
       if (filteredLessons.isNotEmpty) {
@@ -965,31 +1045,33 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   // Загружает данные при запуске
   Future<void> _loadData() async {
     if (!mounted || _scheduleProvider == null) return;
-    
+
     // Загружаем последовательно
     await _scheduleProvider!.loadSchedule();
     await _scheduleProvider!.loadGroupsAndTeachers();
-    
+
     if (!mounted) return;
-    
+
     // Проверяем синхронизацию данных
-    if (_scheduleProvider!.scheduleData == null || _scheduleProvider!.scheduleData!.isEmpty) {
-      if (_scheduleProvider!.fullScheduleData != null && _scheduleProvider!.fullScheduleData!.isNotEmpty) {
+    if (_scheduleProvider!.scheduleData == null ||
+        _scheduleProvider!.scheduleData!.isEmpty) {
+      if (_scheduleProvider!.fullScheduleData != null &&
+          _scheduleProvider!.fullScheduleData!.isNotEmpty) {
         debugPrint('🔄 Запуск синхронизации расписания из архива');
         await _scheduleProvider!.syncScheduleData();
         if (!mounted) return;
         _prepareData(_scheduleProvider!);
       }
     }
-    
+
     // Устанавливаем слушатель на изменение данных в провайдере
     _scheduleProvider!.addListener(_onScheduleDataChanged);
   }
-  
+
   // Обработчик изменения данных в провайдере
   void _onScheduleDataChanged() {
     if (!mounted || _scheduleProvider == null) return;
-    
+
     if (_scheduleProvider!.scheduleData != null) {
       setState(() {
         _prepareData(_scheduleProvider!);
@@ -1000,19 +1082,20 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   // Показывает настройки подсказок поиска
   void _showSearchSuggestionsSettings() {
     final provider = Provider.of<ScheduleProvider>(context, listen: false);
-    
+
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) {
           final settings = provider.searchSettings;
-          
+
           return AlertDialog(
             title: Row(
               children: [
-                Icon(Icons.settings, color: Theme.of(context).colorScheme.primary),
+                Icon(Icons.settings,
+                    color: Theme.of(context).colorScheme.primary),
                 const SizedBox(width: 8),
-                const Text('Настройки подсказок'),
+                Expanded(child: const Text('Настройки подсказок')),
               ],
             ),
             content: SingleChildScrollView(
@@ -1033,7 +1116,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                       setState(() {});
                     },
                   ),
-                  
+
                   const Divider(),
                   const Padding(
                     padding: EdgeInsets.only(top: 8.0, bottom: 8.0),
@@ -1042,7 +1125,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                       style: TextStyle(fontWeight: FontWeight.bold),
                     ),
                   ),
-                  
+
                   // Чекбоксы для категорий
                   CheckboxListTile(
                     title: const Text('Группы'),
@@ -1076,7 +1159,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                       setState(() {});
                     },
                   ),
-                  
+
                   if (settings.useFavorites) ...[
                     const Divider(),
                     const Padding(
@@ -1086,16 +1169,16 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ),
-                    
+
                     // Кнопка для добавления элемента в избранное
                     ElevatedButton.icon(
                       icon: const Icon(Icons.add),
                       label: const Text('Добавить в избранное'),
                       onPressed: _showAddToFavoritesDialog,
                     ),
-                    
+
                     const SizedBox(height: 16),
-                    
+
                     // Список избранных элементов с возможностью удаления
                     if (settings.favoriteGroups.isNotEmpty ||
                         settings.favoriteTeachers.isNotEmpty ||
@@ -1103,43 +1186,47 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                         settings.favoriteSubjects.isNotEmpty) ...[
                       const Text('Избранные элементы:'),
                       const SizedBox(height: 8),
-                      
+
                       // Группы
                       if (settings.favoriteGroups.isNotEmpty) ...[
-                        const Text('Группы:', style: TextStyle(fontWeight: FontWeight.w500)),
+                        const Text('Группы:',
+                            style: TextStyle(fontWeight: FontWeight.w500)),
                         _buildFavoritesChips(
                           settings.favoriteGroups,
                           (item) => provider.removeFavoriteGroup(item),
                           setState,
                         ),
                       ],
-                      
+
                       // Преподаватели
                       if (settings.favoriteTeachers.isNotEmpty) ...[
                         const SizedBox(height: 8),
-                        const Text('Преподаватели:', style: TextStyle(fontWeight: FontWeight.w500)),
+                        const Text('Преподаватели:',
+                            style: TextStyle(fontWeight: FontWeight.w500)),
                         _buildFavoritesChips(
                           settings.favoriteTeachers,
                           (item) => provider.removeFavoriteTeacher(item),
                           setState,
                         ),
                       ],
-                      
+
                       // Кабинеты
                       if (settings.favoriteClassrooms.isNotEmpty) ...[
                         const SizedBox(height: 8),
-                        const Text('Кабинеты:', style: TextStyle(fontWeight: FontWeight.w500)),
+                        const Text('Кабинеты:',
+                            style: TextStyle(fontWeight: FontWeight.w500)),
                         _buildFavoritesChips(
                           settings.favoriteClassrooms,
                           (item) => provider.removeFavoriteClassroom(item),
                           setState,
                         ),
                       ],
-                      
+
                       // Предметы
                       if (settings.favoriteSubjects.isNotEmpty) ...[
                         const SizedBox(height: 8),
-                        const Text('Предметы:', style: TextStyle(fontWeight: FontWeight.w500)),
+                        const Text('Предметы:',
+                            style: TextStyle(fontWeight: FontWeight.w500)),
                         _buildFavoritesChips(
                           settings.favoriteSubjects,
                           (item) => provider.removeFavoriteSubject(item),
@@ -1149,7 +1236,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     ] else ...[
                       const Text(
                         'У вас пока нет избранных элементов. Добавьте их, чтобы они отображались в подсказках.',
-                        style: TextStyle(fontStyle: FontStyle.italic, color: Colors.grey),
+                        style: TextStyle(
+                            fontStyle: FontStyle.italic, color: Colors.grey),
                       ),
                     ],
                   ],
@@ -1169,19 +1257,20 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   }
 
   // Построение чипов для избранных элементов с возможностью удаления
-  Widget _buildFavoritesChips(List<String> items, Function(String) onRemove, StateSetter setState) {
+  Widget _buildFavoritesChips(
+      List<String> items, Function(String) onRemove, StateSetter setState) {
     return Wrap(
       spacing: 8,
-      children: items.map((item) => 
-        Chip(
-          label: Text(item),
-          deleteIcon: const Icon(Icons.close, size: 16),
-          onDeleted: () async {
-            await onRemove(item);
-            setState(() {});
-          },
-        )
-      ).toList(),
+      children: items
+          .map((item) => Chip(
+                label: Text(item),
+                deleteIcon: const Icon(Icons.close, size: 16),
+                onDeleted: () async {
+                  await onRemove(item);
+                  setState(() {});
+                },
+              ))
+          .toList(),
     );
   }
 
@@ -1190,39 +1279,43 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     final provider = Provider.of<ScheduleProvider>(context, listen: false);
     final TextEditingController textController = TextEditingController();
     String category = 'group'; // По умолчанию - группа
-    
+
     // Список всех доступных значений в зависимости от категории
     List<String> availableItems = provider.groups;
-    
+
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) {
           // Фильтруем элементы на основе текущего ввода
-          List<String> filteredItems = textController.text.isEmpty 
-              ? availableItems 
+          List<String> filteredItems = textController.text.isEmpty
+              ? availableItems
               : availableItems
-                  .where((item) => item.toLowerCase().contains(textController.text.toLowerCase()))
+                  .where((item) => item
+                      .toLowerCase()
+                      .contains(textController.text.toLowerCase()))
                   .toList();
-          
+
           // Ограничиваем количество элементов для отображения
           final displayItems = filteredItems.take(5).toList();
-          
+
           return AlertDialog(
             title: const Text('Добавить в избранное'),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 DropdownButtonFormField<String>(
-                  value: category,
+                  initialValue: category,
                   decoration: const InputDecoration(
                     labelText: 'Категория',
                     border: OutlineInputBorder(),
                   ),
                   items: const [
                     DropdownMenuItem(value: 'group', child: Text('Группа')),
-                    DropdownMenuItem(value: 'teacher', child: Text('Преподаватель')),
-                    DropdownMenuItem(value: 'classroom', child: Text('Кабинет')),
+                    DropdownMenuItem(
+                        value: 'teacher', child: Text('Преподаватель')),
+                    DropdownMenuItem(
+                        value: 'classroom', child: Text('Кабинет')),
                     DropdownMenuItem(value: 'subject', child: Text('Предмет')),
                   ],
                   onChanged: (value) {
@@ -1241,7 +1334,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                             // Получаем уникальные кабинеты из расписания
                             if (provider.scheduleData != null) {
                               final allItems = <String>{};
-                              for (var daySchedule in provider.scheduleData!.values) {
+                              for (var daySchedule
+                                  in provider.scheduleData!.values) {
                                 for (var groupSchedule in daySchedule.values) {
                                   for (var item in groupSchedule) {
                                     allItems.add(item.classroom);
@@ -1257,7 +1351,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                             // Получаем уникальные предметы из расписания
                             if (provider.scheduleData != null) {
                               final allItems = <String>{};
-                              for (var daySchedule in provider.scheduleData!.values) {
+                              for (var daySchedule
+                                  in provider.scheduleData!.values) {
                                 for (var groupSchedule in daySchedule.values) {
                                   for (var item in groupSchedule) {
                                     allItems.add(item.subject);
@@ -1290,36 +1385,39 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                   },
                 ),
                 const SizedBox(height: 16),
-                
+
                 // Показываем подходящие варианты
                 if (displayItems.isNotEmpty)
                   Flexible(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: displayItems.map((item) => 
-                        InkWell(
-                          onTap: () async {
-                            // Добавляем выбранный элемент в избранное
-                            await _addToFavorites(category, item, provider);
-                            
-                            // Показываем сообщение об успешном добавлении
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Добавлено в избранное: $item'),
-                                duration: const Duration(seconds: 1),
-                              ),
-                            );
-                            
-                            // Закрываем диалог
-                            Navigator.of(context).pop();
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 8.0),
-                            child: Text(item),
-                          ),
-                        )
-                      ).toList(),
+                      children: displayItems
+                          .map((item) => InkWell(
+                                onTap: () async {
+                                  // Добавляем выбранный элемент в избранное
+                                  await _addToFavorites(
+                                      category, item, provider);
+
+                                  // Показываем сообщение об успешном добавлении
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content:
+                                          Text('Добавлено в избранное: $item'),
+                                      duration: const Duration(seconds: 1),
+                                    ),
+                                  );
+
+                                  // Закрываем диалог
+                                  Navigator.of(context).pop();
+                                },
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 8.0),
+                                  child: Text(item),
+                                ),
+                              ))
+                          .toList(),
                     ),
                   )
                 else if (textController.text.isNotEmpty)
@@ -1336,7 +1434,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                   final value = textController.text.trim();
                   if (value.isNotEmpty && availableItems.contains(value)) {
                     await _addToFavorites(category, value, provider);
-                    
+
                     // Показываем сообщение об успешном добавлении
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
@@ -1344,13 +1442,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                         duration: const Duration(seconds: 1),
                       ),
                     );
-                    
+
                     Navigator.of(context).pop();
                   } else if (value.isNotEmpty) {
                     // Показываем предупреждение о неверном элементе
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
-                        content: Text('Пожалуйста, выберите существующий элемент из списка'),
+                        content: Text(
+                            'Пожалуйста, выберите существующий элемент из списка'),
                         duration: Duration(seconds: 2),
                       ),
                     );
@@ -1364,9 +1463,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       ),
     );
   }
-  
+
   // Вспомогательный метод для добавления элемента в избранное
-  Future<void> _addToFavorites(String category, String value, ScheduleProvider provider) async {
+  Future<void> _addToFavorites(
+      String category, String value, ScheduleProvider provider) async {
     switch (category) {
       case 'group':
         await provider.addFavoriteGroup(value);
@@ -1407,17 +1507,17 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     border: const OutlineInputBorder(),
                     prefixIcon: const Icon(Icons.search_outlined),
                     suffixIcon: _searchQuery.isNotEmpty
-                      ? IconButton(
-                          icon: const Icon(Icons.clear),
-                          onPressed: () {
-                            setState(() {
-                              _searchController.clear();
-                              _searchQuery = '';
-                              _saveSearchQuery('');
-                            });
-                          },
-                        )
-                      : null,
+                        ? IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () {
+                              setState(() {
+                                _searchController.clear();
+                                _searchQuery = '';
+                                _saveSearchQuery('');
+                              });
+                            },
+                          )
+                        : null,
                   ),
                 ),
               ),
@@ -1439,9 +1539,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Padding(
-                      padding: const EdgeInsets.only(top: 8.0, left: 4.0, bottom: 4.0),
+                      padding: const EdgeInsets.only(
+                          top: 8.0, left: 4.0, bottom: 4.0),
                       child: Text(
-                        provider.searchSettings.useFavorites ? 'Избранное:' : 'Подсказки:',
+                        provider.searchSettings.useFavorites
+                            ? 'Избранное:'
+                            : 'Подсказки:',
                         style: TextStyle(
                           fontSize: 12,
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -1451,9 +1554,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     Wrap(
                       spacing: 8,
                       runSpacing: 8, // Расстояние между строками чипов
-                      children: suggestions.map((suggestion) => 
-                        _buildSearchChip(suggestion)
-                      ).toList(),
+                      children: suggestions
+                          .map((suggestion) => _buildSearchChip(suggestion))
+                          .toList(),
                     ),
                   ],
                 );
@@ -1463,4 +1566,4 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       ),
     );
   }
-} 
+}

@@ -7,9 +7,12 @@ import '../services/database_service.dart';
 import '../providers/schedule_provider.dart';
 import 'dart:io';
 import 'package:sqflite/sqflite.dart';
-import '../main.dart';
 import 'package:intl/intl.dart' as intl;
 import '../widgets/developer_ads_widget.dart';
+import '../main.dart'; // Для доступа к myAppKey
+import 'personalization_screen.dart';
+
+import 'widget_settings_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -20,16 +23,11 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool? _isDarkMode;
-  bool _isLoading = true;
   String _appVersion = '';
   int _storageDays = 30;
-  String _lastUpdateInfo = '';
+  String _lastUpdateInfo = 'Загрузка...';
   Map<String, String> _cacheInfo = {};
-  bool _showCacheDetails = false;
   int _cookieCount = 0;
-  bool _easterEggVersionFound = false;
-  bool _minigameUnlocked = false;
-  bool _hideMinigame = false;
 
   @override
   void initState() {
@@ -39,25 +37,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _loadLastUpdateInfo();
     _calculateCacheSize();
     _loadCookieCount();
-    _loadEasterEggsStatus();
   }
 
   // Загружаем настройки из памяти телефона
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _isDarkMode = prefs.getBool('is_dark_mode');
-      _storageDays = prefs.getInt('schedule_storage_days') ?? 30;
-      _isLoading = false;
-    });
+    if (mounted) {
+      setState(() {
+        _isDarkMode = prefs.getBool('is_dark_mode');
+        _storageDays = prefs.getInt('schedule_storage_days') ?? 30;
+      });
+    }
   }
 
   // Получаем версию приложения
   Future<void> _loadAppVersion() async {
     final packageInfo = await PackageInfo.fromPlatform();
-    setState(() {
-      _appVersion = packageInfo.version;
-    });
+    if (mounted) {
+      setState(() {
+        _appVersion = packageInfo.version;
+      });
+    }
   }
 
   // Смотрим когда последний раз обновляли расписание
@@ -65,33 +65,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final lastUpdateStr = prefs.getString('last_schedule_update');
-      
-      if (lastUpdateStr != null) {
-        final lastUpdate = DateTime.parse(lastUpdateStr);
-        final now = DateTime.now();
-        final diff = now.difference(lastUpdate);
-        
-        setState(() {
-          if (diff.inMinutes < 1) {
-            _lastUpdateInfo = "Обновлено только что";
-          } else if (diff.inMinutes < 60) {
-            _lastUpdateInfo = "Обновлено ${diff.inMinutes} мин. назад";
-          } else if (diff.inHours < 24) {
-            _lastUpdateInfo = "Обновлено ${diff.inHours} ч. назад";
-          } else {
-            final formatter = intl.DateFormat('dd.MM.yyyy HH:mm', 'ru_RU');
-            _lastUpdateInfo = "Обновлено ${formatter.format(lastUpdate)}";
-          }
-        });
-      } else {
-        setState(() {
-          _lastUpdateInfo = "Нет данных об обновлении";
-        });
+
+      if (mounted) {
+        if (lastUpdateStr != null) {
+          final lastUpdate = DateTime.parse(lastUpdateStr);
+          final now = DateTime.now();
+          final diff = now.difference(lastUpdate);
+
+          setState(() {
+            if (diff.inMinutes < 1) {
+              _lastUpdateInfo = "Обновлено только что";
+            } else if (diff.inMinutes < 60) {
+              _lastUpdateInfo = "Обновлено ${diff.inMinutes} мин. назад";
+            } else if (diff.inHours < 24) {
+              _lastUpdateInfo = "Обновлено ${diff.inHours} ч. назад";
+            } else {
+              final formatter = intl.DateFormat('dd.MM.yyyy HH:mm', 'ru_RU');
+              _lastUpdateInfo = "Обновлено ${formatter.format(lastUpdate)}";
+            }
+          });
+        } else {
+          setState(() {
+            _lastUpdateInfo = "Нет данных об обновлении";
+          });
+        }
       }
     } catch (e) {
-      setState(() {
-        _lastUpdateInfo = "Ошибка получения информации";
-      });
+      if (mounted) {
+        setState(() {
+          _lastUpdateInfo = "Ошибка получения информации";
+        });
+      }
     }
   }
 
@@ -100,7 +104,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final dbDir = await getDatabasesPath();
       final Map<String, String> cacheInfo = {};
-      
+
       // Размер базы данных
       final dbFile = File('$dbDir/schedule.db');
       if (await dbFile.exists()) {
@@ -109,19 +113,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
       } else {
         cacheInfo['База данных'] = '0 КБ';
       }
-      
+
       // Размер SharedPreferences
       final prefs = await SharedPreferences.getInstance();
       final prefsSize = await prefs.getKeys().length * 100; // Примерная оценка
       cacheInfo['Настройки'] = _formatSize(prefsSize);
-      
+
       // Общий размер
       final totalSize = await _calculateTotalCacheSize();
       cacheInfo['Общий размер'] = _formatSize(totalSize);
-      
-      setState(() {
-        _cacheInfo = cacheInfo;
-      });
+
+      if (mounted) {
+        setState(() {
+          _cacheInfo = cacheInfo;
+        });
+      }
     } catch (e) {
       print('Ошибка при расчете размера кэша: $e');
     }
@@ -130,24 +136,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // Считаем общий размер всех данных
   Future<int> _calculateTotalCacheSize() async {
     int totalSize = 0;
-    
+
     try {
       final dbDir = await getDatabasesPath();
-      
+
       // Размер базы данных
       final dbFile = File('$dbDir/schedule.db');
       if (await dbFile.exists()) {
         totalSize += await dbFile.length();
       }
-      
+
       // Примерный размер SharedPreferences
       final prefs = await SharedPreferences.getInstance();
       totalSize += prefs.getKeys().length * 100; // Примерная оценка
-      
     } catch (e) {
       print('Ошибка при расчете общего размера кэша: $e');
     }
-    
+
     return totalSize;
   }
 
@@ -165,52 +170,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // Загружаем количество печенек
   Future<void> _loadCookieCount() async {
     final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _cookieCount = prefs.getInt('cookie_count') ?? 0;
-    });
-  }
-
-  // Загружаем статус найденных пасхалок
-  Future<void> _loadEasterEggsStatus() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _easterEggVersionFound = prefs.getBool('easter_egg_version_found') ?? false;
-      _minigameUnlocked = prefs.getBool('minigame_unlocked') ?? false;
-      _hideMinigame = prefs.getBool('hide_minigame') ?? false;
-    });
-  }
-  
-  // Сохраняем статус пасхалки
-  Future<void> _saveEasterEggStatus(String eggName, bool found) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(eggName, found);
+    if (mounted) {
+      setState(() {
+        _cookieCount = prefs.getInt('cookie_count') ?? 0;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text('Загрузка настроек...'),
-            ],
-          ),
-        ),
-      );
-    }
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Настройки'),
       ),
       body: ListView(
-            children: [
-          // Секция внешнего вида
-          _buildSectionHeader('Внешний вид'),
+        children: [
+          // Секция персонализации (объединенная)
+          _buildSectionHeader('Персонализация'),
           SwitchListTile(
             title: const Text('Тёмная тема'),
             subtitle: const Text('Включить тёмный режим'),
@@ -223,32 +199,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
               color: Theme.of(context).colorScheme.primary,
             ),
           ),
-          
-          // Добавляем переключатель для скрытия мини-игры если она разблокирована
-          if (_minigameUnlocked)
-            SwitchListTile(
-              title: const Text('Скрыть мини-игру'),
-              subtitle: const Text('Убрать мини-игру из меню навигации'),
-              value: _hideMinigame,
-              onChanged: (value) async {
-                final prefs = await SharedPreferences.getInstance();
-                await prefs.setBool('hide_minigame', value);
-                setState(() {
-                  _hideMinigame = value;
-                });
-                
-                // Обновляем навигационное меню
-                final state = context.findAncestorStateOfType<MyHomePageState>();
-                if (state != null) {
-                  state.updateMinigameVisibility(!value);
-                }
-              },
-              secondary: Icon(
-                Icons.videogame_asset_off,
-                color: Theme.of(context).colorScheme.primary,
-              ),
+          ListTile(
+            title: const Text('Настройки интерфейса'),
+            subtitle: const Text('Цвета, шрифты, формат отображения'),
+            leading: Icon(
+              Icons.palette_outlined,
+              color: Theme.of(context).colorScheme.primary,
             ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const PersonalizationScreen(),
+                ),
+              );
+            },
+          ),
           const Divider(),
+
+          // Секция виджета
+          _buildWidgetSection(),
 
           // Секция расписания
           _buildScheduleSection(),
@@ -360,7 +331,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               Icons.info_outline,
               color: Theme.of(context).colorScheme.primary,
             ),
-            onTap: _handleVersionTap,
           ),
         ],
       ),
@@ -391,9 +361,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
     // Обновляем в настройках телефона
     await prefs.setBool('is_dark_mode', newValue);
-    
-    // Получаем ссылку на главное состояние приложения и обновляем тему
-    final appState = context.findAncestorStateOfType<MyAppState>();
+
+    // Обновляем тему в главном виджете приложения через глобальный ключ
+    final appState = myAppKey.currentState;
     if (appState != null) {
       appState.updateTheme(newValue);
     }
@@ -404,25 +374,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _storageDays = days;
-      _isLoading = true;
     });
-    
+
     await prefs.setInt('schedule_storage_days', days);
-    
+
     // Обновляем настройки в провайдере и очищаем старые данные
     final provider = context.read<ScheduleProvider>();
     await provider.updateStorageDays(days);
-    
+
     // Пересчитываем размер кэша
     await _calculateCacheSize();
-    
-    setState(() {
-      _isLoading = false;
-    });
-    
+
     // Показываем уведомление об успешном обновлении
     if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Настройки хранения обновлены: $_storageDays дней'),
           duration: const Duration(seconds: 2),
@@ -434,10 +399,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // Открывает ссылки (сайт колледжа и телеграм)
   Future<void> _launchUrl(String urlString) async {
     final Uri url = Uri.parse(urlString);
-    
+
     if (urlString.startsWith('https://t.me/')) {
       try {
-        final telegramUrl = Uri.parse('tg://resolve?domain=${urlString.split('/').last}');
+        final telegramUrl =
+            Uri.parse('tg://resolve?domain=${urlString.split('/').last}');
         if (await canLaunchUrl(telegramUrl)) {
           await launchUrl(telegramUrl);
           return;
@@ -446,7 +412,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         debugPrint('Ошибка открытия Telegram: $e');
       }
     }
-    
+
     try {
       await launchUrl(
         url,
@@ -469,16 +435,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             const Text(
               'Gargun Daniil(383)',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold
-              ),
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
             InkWell(
               onTap: () => _launchUrl('tg://resolve?domain=Daniilgargun'),
               child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                padding:
+                    const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.primaryContainer,
                   borderRadius: BorderRadius.circular(8),
@@ -523,7 +487,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _showDonationDialog() async {
     await showDialog(
       context: context,
-      barrierDismissible: false, // Запрещаем закрытие при нажатии за пределами диалога
+      barrierDismissible:
+          false, // Запрещаем закрытие при нажатии за пределами диалога
       builder: (context) => DeveloperAdsWidget(
         onCookieCountUpdated: () {
           _loadCookieCount();
@@ -538,7 +503,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Сбросить настройки?'),
-        content: const Text('Все настройки будут возвращены к значениям по умолчанию. Данные расписания не будут удалены.'),
+        content: const Text(
+            'Все настройки будут возвращены к значениям по умолчанию. Данные расписания не будут удалены.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -557,37 +523,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     if (result == true) {
       final prefs = await SharedPreferences.getInstance();
-      
+
       // Сохраняем только данные о последнем обновлении
       final lastUpdateStr = prefs.getString('last_schedule_update');
-      
+
       // Очищаем все настройки
       await prefs.clear();
-      
+
       // Восстанавливаем данные о последнем обновлении
       if (lastUpdateStr != null) {
         await prefs.setString('last_schedule_update', lastUpdateStr);
       }
-      
+
       // Устанавливаем настройки по умолчанию
       await prefs.setBool('is_dark_mode', false);
       await prefs.setInt('schedule_storage_days', 30);
-      
+
       // Обновляем настройки в провайдере
       final provider = context.read<ScheduleProvider>();
       await provider.updateStorageDays(30);
-      
+
       // Перезагружаем настройки
       await _loadSettings();
-      
-      // Обновляем тему в родительском виджете
-      if (context.mounted) {
-        final appState = context.findAncestorStateOfType<MyAppState>();
-        if (appState != null) {
-          appState.updateTheme(false);
-        }
-      }
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Настройки сброшены')),
@@ -602,7 +560,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Очистить расписание?'),
-        content: const Text('Все сохраненные данные расписания будут удалены. Вам потребуется подключение к интернету для загрузки нового расписания.'),
+        content: const Text(
+            'Все сохраненные данные расписания будут удалены. Вам потребуется подключение к интернету для загрузки нового расписания.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -620,22 +579,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     if (result == true) {
-      setState(() {
-        _isLoading = true;
-      });
-      
       // Очищаем базу данных
       final db = context.read<DatabaseService>();
       await db.recreateDatabase();
-      
+
       // Сбрасываем данные в провайдере
       final provider = context.read<ScheduleProvider>();
       provider.clearCache();
-      
-      setState(() {
-        _isLoading = false;
-      });
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Данные расписания очищены')),
@@ -644,13 +595,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  // Секция виджета
+  Widget _buildWidgetSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionHeader('Настройки виджетов'),
+        ListTile(
+          title: const Text('Настроить виджеты'),
+          subtitle: const Text('Предпросмотр, тема, прозрачность'),
+          leading: Icon(
+            Icons.widgets_outlined,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const WidgetSettingsScreen(),
+              ),
+            );
+          },
+        ),
+        const Divider(),
+      ],
+    );
+  }
+
   // Секция расписания
   Widget _buildScheduleSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildSectionHeader('Расписание'),
-          ListTile(
+        ListTile(
           title: const Text('Период отображения'),
           subtitle: Text('$_storageDays дней'),
           leading: Icon(
@@ -684,203 +663,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ],
           ),
-          ),
-          ListTile(
-            title: const Text('Последнее обновление'),
-            subtitle: Text(_lastUpdateInfo),
+        ),
+        ListTile(
+          title: const Text('Последнее обновление'),
+          subtitle: Text(_lastUpdateInfo),
           leading: Icon(
             Icons.update,
             color: Theme.of(context).colorScheme.primary,
           ),
-            trailing: IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: () async {
-              setState(() {
-                _isLoading = true;
-              });
+          trailing: IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () async {
               await context.read<ScheduleProvider>().updateSchedule();
-                await _loadLastUpdateInfo();
-              setState(() {
-                _isLoading = false;
-              });
-              },
-            ),
+              await _loadLastUpdateInfo();
+            },
           ),
+        ),
         const Divider(),
       ],
     );
   }
-
-  // Обработчик нажатий на версию для пасхалки
-  int _versionTapCount = 0;
-  DateTime? _lastTapTime;
-  bool _easterEggShown = false; // Флаг для отслеживания показа пасхалки
-  
-  void _handleVersionTap() {
-    // Если пасхалка уже показана, игнорируем дополнительные нажатия
-    if (_easterEggShown) return;
-    
-    final now = DateTime.now();
-    
-    // Сброс счетчика если прошло более 0.5 секунды между нажатиями
-    if (_lastTapTime != null && 
-        now.difference(_lastTapTime!).inMilliseconds > 500) {
-      _versionTapCount = 0;
-    }
-    
-    _lastTapTime = now;
-    _versionTapCount++;
-    
-    if (_versionTapCount == 3) {
-      _versionTapCount = 0;
-      _easterEggShown = true; // Устанавливаем флаг, чтобы предотвратить повторное открытие
-      _showEasterEgg();
-    }
-  }
-  
-  void _showEasterEgg() {
-    // Отмечаем первую пасхалку как найденную
-    _easterEggVersionFound = true;
-    _saveEasterEggStatus('easter_egg_version_found', true);
-    
-    showDialog(
-      context: context,
-      barrierDismissible: false, // Запрещаем закрытие при нажатии за пределами диалога
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            TweenAnimationBuilder<double>(
-              tween: Tween<double>(begin: 0.0, end: 1.0),
-              duration: const Duration(milliseconds: 800),
-              builder: (context, value, child) {
-                return Transform.scale(
-                  scale: value.clamp(0.0, 1.0),
-                  child: const Text('😎', style: TextStyle(fontSize: 24)),
-                );
-              },
-            ),
-            const SizedBox(width: 10),
-            TweenAnimationBuilder<double>(
-              tween: Tween<double>(begin: 0.0, end: 1.0),
-              duration: const Duration(milliseconds: 1000),
-              curve: Curves.easeOut, // Заменил elasticOut на безопасный easeOut
-              builder: (context, value, child) {
-                return Transform.scale(
-                  scale: value.clamp(0.0, 1.0),
-                  child: const Text('Поздравляем!'),
-                );
-              },
-            ),
-          ],
-        ),
-        content: SingleChildScrollView( // Добавил прокрутку на случай переполнения
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TweenAnimationBuilder<double>(
-                tween: Tween<double>(begin: 0.0, end: 1.0),
-                duration: const Duration(milliseconds: 1200),
-                curve: Curves.easeOutCubic, // Заменил на более безопасную кривую
-                builder: (context, value, child) {
-                  // Безопасное значение для opacity между 0.0 и 1.0
-                  final safeOpacity = value.clamp(0.0, 1.0);
-                  return Opacity(
-                    opacity: safeOpacity,
-                    child: Transform.translate(
-                      offset: Offset(0, 20 * (1 - safeOpacity)),
-                      child: const Text(
-                        'Вы нашли пасхалку!',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-              
-              const SizedBox(height: 20),
-              TweenAnimationBuilder<double>(
-                tween: Tween<double>(begin: 0.0, end: 1.0),
-                duration: const Duration(milliseconds: 1500),
-                curve: Curves.easeOut, // Заменил bounceOut на более стабильный
-                builder: (context, value, child) {
-                  return Transform.scale(
-                    scale: value.clamp(0.0, 1.0),
-                    child: Image.asset(
-                      'assets/images/easter_egg.png',
-                      width: 150, // Уменьшил размер для избежания переполнения
-                      height: 150,
-                      errorBuilder: (context, error, stackTrace) {
-                        return TweenAnimationBuilder<double>(
-                          tween: Tween<double>(begin: 0.0, end: 1.0),
-                          duration: const Duration(milliseconds: 1000),
-                          curve: Curves.easeOut, // Безопасная кривая
-                          builder: (context, value, child) {
-                            // Заменяем Transform.rotate на более подходящую анимацию
-                            return Transform.scale(
-                              scale: value.clamp(0.0, 1.0),
-                              child: Container(
-                                width: 80, // Уменьшил размер
-                                height: 80,
-                                decoration: BoxDecoration(
-                                  color: Theme.of(context).colorScheme.primaryContainer,
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                                child: Icon(
-                                  Icons.emoji_events,
-                                  size: 40,
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                              ),
-                            );
-                          },
-                        );
-                      },
-                    ),
-                  );
-                },
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TweenAnimationBuilder<double>(
-            tween: Tween<double>(begin: 0.0, end: 1.0),
-            duration: const Duration(milliseconds: 1500), // Уменьшил длительность
-            curve: Curves.easeIn, // Более простая кривая
-            builder: (context, value, child) {
-              return Opacity(
-                opacity: value.clamp(0.0, 1.0), // Гарантируем безопасное значение
-                child: TextButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    // Сбрасываем флаг после закрытия диалога
-                    Future.delayed(const Duration(milliseconds: 300), () {
-                      if (mounted) {
-                        setState(() {
-                          _easterEggShown = false;
-                        });
-                        
-                        // Проверяем, не нашли ли мы все пасхалки, и обновляем навигацию
-                        if (_easterEggVersionFound) {
-                          // Принудительно обновляем навигацию в MyApp
-                          final state = context.findAncestorStateOfType<MyHomePageState>();
-                          if (state != null) {
-                            state.checkAndUpdateNavigation();
-                          }
-                        }
-                      }
-                    });
-                  },
-                  child: const Text('Круто!', style: TextStyle(fontSize: 16)),
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-} 
+}
