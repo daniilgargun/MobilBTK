@@ -3,4 +3,16 @@
 
     <string name="widget_name">Расписание занятий</string>
     <string name="widget_name_bell">Расписание звонков</string>
+
+    <!-- Описания для списка виджетов (Android 12+) -->
+    <string name="widget_description">Ближайшие пары на главном экране</string>
+    <string name="widget_description_bell">Время начала и конца пар</string>
+
+    <!-- Тексты внутри виджета -->
+    <string name="widget_default_title">Мое расписание</string>
+    <string name="widget_loading">Загрузка…</string>
+    <string name="widget_no_lessons">Нет занятий</string>
+    <string name="widget_open_app">Открыть приложение</string>
+    <string name="widget_prev_day">Предыдущий день</string>
+    <string name="widget_next_day">Следующий день</string>
 </resources>

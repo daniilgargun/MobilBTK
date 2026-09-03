@@ -22,16 +22,33 @@ class BellScheduleWidgetProvider : AppWidgetProvider() {
         for (appWidgetId in appWidgetIds) {
             updateBellScheduleWidget(context, appWidgetManager, appWidgetId)
         }
+        WidgetUpdateScheduler.scheduleNext(
+            context,
+            BellScheduleWidgetProvider::class.java,
+            ALARM_REQUEST_CODE
+        )
+    }
+
+    private companion object {
+        const val ALARM_REQUEST_CODE = 3
     }
 
     override fun onEnabled(context: Context) {
         super.onEnabled(context)
-        startAlarm(context)
+        WidgetUpdateScheduler.scheduleNext(
+            context,
+            BellScheduleWidgetProvider::class.java,
+            ALARM_REQUEST_CODE
+        )
     }
 
     override fun onDisabled(context: Context) {
         super.onDisabled(context)
-        stopAlarm(context)
+        WidgetUpdateScheduler.cancel(
+            context,
+            BellScheduleWidgetProvider::class.java,
+            ALARM_REQUEST_CODE
+        )
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -39,12 +56,18 @@ class BellScheduleWidgetProvider : AppWidgetProvider() {
         
         val action = intent.action
         
-        if (action == "ACTION_AUTO_UPDATE") {
+        if (action == WidgetUpdateScheduler.ACTION_AUTO_UPDATE) {
              val appWidgetManager = AppWidgetManager.getInstance(context)
              val componentName = ComponentName(context, BellScheduleWidgetProvider::class.java)
              val appWidgetIds = appWidgetManager.getAppWidgetIds(componentName)
              onUpdate(context, appWidgetManager, appWidgetIds)
              appWidgetManager.notifyAppWidgetViewDataChanged(appWidgetIds, R.id.widget_grid)
+             // Одноразовый будильник: планируем следующую границу пары.
+             WidgetUpdateScheduler.scheduleNext(
+                 context,
+                 BellScheduleWidgetProvider::class.java,
+                 ALARM_REQUEST_CODE
+             )
         } else if (action == "ACTION_NEXT_PAGE" || action == "ACTION_PREV_PAGE") {
             val widgetData = HomeWidgetPlugin.getData(context)
             var pageIndex = widgetData.getInt("bell_schedule_page_index", 0)
@@ -70,31 +93,6 @@ class BellScheduleWidgetProvider : AppWidgetProvider() {
         }
     }
 
-    private fun startAlarm(context: Context) {
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
-        val intent = Intent(context, BellScheduleWidgetProvider::class.java)
-        intent.action = "ACTION_AUTO_UPDATE"
-        val pendingIntent = PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_IMMUTABLE)
-
-        // Update every 1 minute to ensure accurate highlighting
-        val intervalMillis = 60 * 1000L 
-        val triggerAtMillis = System.currentTimeMillis() + intervalMillis
-
-        alarmManager.setRepeating(
-            android.app.AlarmManager.RTC,
-            triggerAtMillis,
-            intervalMillis,
-            pendingIntent
-        )
-    }
-
-    private fun stopAlarm(context: Context) {
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
-        val intent = Intent(context, BellScheduleWidgetProvider::class.java)
-        intent.action = "ACTION_AUTO_UPDATE"
-        val pendingIntent = PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_IMMUTABLE)
-        alarmManager.cancel(pendingIntent)
-    }
 }
 
 internal fun updateBellScheduleWidget(
@@ -105,8 +103,8 @@ internal fun updateBellScheduleWidget(
     val widgetData = HomeWidgetPlugin.getData(context)
     
     // Theme settings
-    val isDark = widgetData.getBoolean("widget_theme_dark", true)
-    val transparency = widgetData.getInt("widget_transparency", 0)
+    val isDark = WidgetTheme.isDark(context)
+    val transparency = WidgetTheme.transparency(context)
     val pageIndex = widgetData.getInt("bell_schedule_page_index", 0)
     val views = RemoteViews(context.packageName, R.layout.bell_schedule_widget)
     
@@ -140,21 +138,19 @@ internal fun updateBellScheduleWidget(
     
     views.setTextViewText(R.id.widget_title, title)
     
-    // Theme
-    val backgroundColor = if (isDark) android.graphics.Color.BLACK else android.graphics.Color.WHITE
-    val textColor = if (isDark) android.graphics.Color.WHITE else android.graphics.Color.BLACK
-    
-    // Apply background transparency
-    val alpha = ((100 - transparency) * 255 / 100).coerceIn(0, 255)
-    val finalColor = android.graphics.Color.argb(
-        alpha,
-        android.graphics.Color.red(backgroundColor),
-        android.graphics.Color.green(backgroundColor),
-        android.graphics.Color.blue(backgroundColor)
-    )
-    
-    views.setInt(R.id.widget_root, "setBackgroundColor", finalColor)
+    // Тема
+    val textColor = WidgetTheme.primaryText(isDark)
+    WidgetTheme.applyBackground(views, isDark, transparency)
     views.setTextColor(R.id.widget_title, textColor)
+    views.setTextColor(R.id.empty_view, textColor)
+
+    // Стрелки листания: без явной перекраски в светлой теме они были
+    // белыми на белом фоне и просто пропадали.
+    views.setInt(R.id.btn_prev, "setColorFilter", textColor)
+    views.setInt(R.id.btn_next, "setColorFilter", textColor)
+
+    // Нажатие на заголовок открывает приложение.
+    views.setOnClickPendingIntent(R.id.widget_title, WidgetTheme.openAppIntent(context, 4))
     
     // Navigation Buttons
     val nextIntent = Intent(context, BellScheduleWidgetProvider::class.java).apply {
@@ -222,23 +218,19 @@ private fun calculateScrollPosition(context: Context, pageIndex: Int): Int {
         
         for (i in 0 until items.length()) {
             val item = items.getJSONObject(i)
-            val start = item.getString("start")
-            val end = item.getString("end")
-            
-            val startParts = start.split(":")
-            val startHour = startParts[0].toInt()
-            val startMinute = startParts[1].toInt()
-            val startTime = startHour * 60 + startMinute
-            
-            val endParts = end.split(":")
-            val endHour = endParts[0].toInt()
-            val endMinute = endParts[1].toInt()
-            val endTime = endHour * 60 + endMinute
-            
+
+            // Элементы типа "dummy" — распорки для сетки в два столбца,
+            // у них пустые start/end. Раньше на них падал разбор времени,
+            // исключение улетало во внешний catch, и автопрокрутка
+            // переставала работать во второй половине вторника и четверга.
+            val startTime = parseMinutesOfDay(item.optString("start"))
+            val endTime = parseMinutesOfDay(item.optString("end"))
+            if (startTime == null || endTime == null) continue
+
             if (currentTime >= startTime && currentTime < endTime) {
                 return i
             }
-             if (currentTime < startTime) {
+            if (currentTime < startTime) {
                 return i
             }
         }
@@ -292,13 +284,14 @@ private fun isDayFinished(context: Context, dayType: String): Boolean {
         
         if (items.length() == 0) return false
         
-        val lastItem = items.getJSONObject(items.length() - 1)
-        val end = lastItem.getString("end")
-        val endParts = end.split(":")
-        val endHour = endParts[0].trim().toInt()
-        val endMinute = endParts[1].trim().toInt()
-        val endTime = endHour * 60 + endMinute
-        
+        // Ищем последнее осмысленное время с конца, пропуская распорки.
+        var lastEnd: Int? = null
+        for (i in items.length() - 1 downTo 0) {
+            lastEnd = parseMinutesOfDay(items.getJSONObject(i).optString("end"))
+            if (lastEnd != null) break
+        }
+        val endTime = lastEnd ?: return false
+
         val now = Calendar.getInstance()
         val currentTime = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
         

@@ -1,86 +1,106 @@
 <?xml version="1.0" encoding="utf-8"?>
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!--
+    Фон вынесен в отдельный ImageView под содержимым — см. пояснение
+    в btk_widget_schedule.xml: setBackgroundColor стирал скругление углов.
+
+    Стрелки листания больше не красятся в разметке жёстко в белый:
+    в светлой теме виджета они становились белыми на белом и пропадали.
+    Цвет задаётся в рантайме через setColorFilter.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_root"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@drawable/widget_background"
-    android:padding="16dp">
+    android:layout_height="match_parent">
 
-    <!-- Header -->
-    <LinearLayout
-        android:id="@+id/header_container"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:layout_marginBottom="8dp">
-
-        <ImageButton
-            android:id="@+id/btn_prev"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:src="@android:drawable/ic_media_previous"
-            android:background="?android:attr/selectableItemBackground"
-            android:tint="#FFFFFF"
-            android:contentDescription="Previous" />
-
-        <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center">
-
-            <TextView
-                android:id="@+id/widget_title"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Пн, Ср, Пт"
-                android:textColor="#FFFFFF"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/widget_date"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text=""
-                android:textColor="#CCFFFFFF"
-                android:textSize="12sp"
-                android:visibility="gone"/>
-        </LinearLayout>
-
-        <ImageButton
-            android:id="@+id/btn_next"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:src="@android:drawable/ic_media_next"
-            android:background="?android:attr/selectableItemBackground"
-            android:tint="#FFFFFF"
-            android:contentDescription="Next" />
-
-    </LinearLayout>
-
-    <!-- Schedule Grid -->
-    <GridView
-        android:id="@+id/widget_grid"
+    <ImageView
+        android:id="@+id/widget_background"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_below="@id/header_container"
-        android:numColumns="auto_fit"
-        android:columnWidth="160dp"
-        android:horizontalSpacing="8dp"
-        android:verticalSpacing="8dp"
-        android:stretchMode="columnWidth"
-        android:scrollbars="none" />
+        android:src="@drawable/widget_background"
+        android:scaleType="fitXY"
+        android:contentDescription="@null" />
 
-    <TextView
-        android:id="@+id/empty_view"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_centerInParent="true"
-        android:text="Нет данных"
-        android:textColor="#FFFFFF"
-        android:visibility="gone" />
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:padding="16dp">
 
-</RelativeLayout>
+        <LinearLayout
+            android:id="@+id/header_container"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="8dp">
+
+            <ImageButton
+                android:id="@+id/btn_prev"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@android:drawable/ic_media_previous"
+                android:background="@android:color/transparent"
+                android:contentDescription="@string/widget_prev_day" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center">
+
+                <TextView
+                    android:id="@+id/widget_title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:text="@string/widget_name_bell"
+                    android:textColor="@color/widget_text_primary"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:maxLines="1"
+                    android:ellipsize="end" />
+
+                <TextView
+                    android:id="@+id/widget_date"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:text=""
+                    android:textColor="@color/widget_text_secondary"
+                    android:textSize="12sp"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:visibility="gone" />
+            </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/btn_next"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@android:drawable/ic_media_next"
+                android:background="@android:color/transparent"
+                android:contentDescription="@string/widget_next_day" />
+        </LinearLayout>
+
+        <GridView
+            android:id="@+id/widget_grid"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_below="@id/header_container"
+            android:numColumns="auto_fit"
+            android:columnWidth="160dp"
+            android:horizontalSpacing="8dp"
+            android:verticalSpacing="8dp"
+            android:stretchMode="columnWidth"
+            android:scrollbars="none" />
+
+        <TextView
+            android:id="@+id/empty_view"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_centerInParent="true"
+            android:text="@string/widget_no_lessons"
+            android:textColor="@color/widget_text_primary"
+            android:visibility="gone" />
+    </RelativeLayout>
+</FrameLayout>

@@ -15,10 +15,7 @@ class ThemePresets {
   /// Получает ColorScheme по имени темы
   static ColorScheme getColorScheme(String themeName, Brightness brightness) {
     final seedColor = presets[themeName] ?? Colors.blue;
-    return ColorScheme.fromSeed(
-      seedColor: seedColor,
-      brightness: brightness,
-    );
+    return ColorScheme.fromSeed(seedColor: seedColor, brightness: brightness);
   }
 
   /// Получает список всех доступных тем

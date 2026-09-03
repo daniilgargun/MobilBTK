@@ -17,13 +17,15 @@ class ScheduleDiffService {
         newDaysCount++;
         groups.forEach((group, items) {
           for (var item in items) {
-            changes.add(ScheduleChange(
-              type: ChangeType.added,
-              date: date,
-              group: group,
-              newItem: item,
-              description: 'Добавлено занятие: ${item.subject}',
-            ));
+            changes.add(
+              ScheduleChange(
+                type: ChangeType.added,
+                date: date,
+                group: group,
+                newItem: item,
+                description: 'Добавлено занятие: ${item.subject}',
+              ),
+            );
           }
         });
       });
@@ -45,13 +47,15 @@ class ScheduleDiffService {
       oldSchedule.forEach((date, groups) {
         groups.forEach((group, items) {
           for (var item in items) {
-            changes.add(ScheduleChange(
-              type: ChangeType.removed,
-              date: date,
-              group: group,
-              oldItem: item,
-              description: 'Удалено занятие: ${item.subject}',
-            ));
+            changes.add(
+              ScheduleChange(
+                type: ChangeType.removed,
+                date: date,
+                group: group,
+                oldItem: item,
+                description: 'Удалено занятие: ${item.subject}',
+              ),
+            );
           }
         });
       });
@@ -75,10 +79,12 @@ class ScheduleDiffService {
     // Проверяем новые дни
     final oldDates = oldSchedule.keys.toSet();
     final newDates = newSchedule.keys.toSet();
-    final addedDates =
-        newDates.where((date) => !oldDates.contains(date)).toSet();
-    final removedDates =
-        oldDates.where((date) => !newDates.contains(date)).toSet();
+    final addedDates = newDates
+        .where((date) => !oldDates.contains(date))
+        .toSet();
+    final removedDates = oldDates
+        .where((date) => !newDates.contains(date))
+        .toSet();
 
     newDaysCount = addedDates.length;
 
@@ -87,13 +93,15 @@ class ScheduleDiffService {
       final groups = newSchedule[date] ?? {};
       groups.forEach((group, items) {
         for (var item in items) {
-          changes.add(ScheduleChange(
-            type: ChangeType.newDay,
-            date: date,
-            group: group,
-            newItem: item,
-            description: 'Новый день: $date - ${item.subject}',
-          ));
+          changes.add(
+            ScheduleChange(
+              type: ChangeType.newDay,
+              date: date,
+              group: group,
+              newItem: item,
+              description: 'Новый день: $date - ${item.subject}',
+            ),
+          );
           addedCount++;
         }
       });
@@ -104,21 +112,24 @@ class ScheduleDiffService {
       final groups = oldSchedule[date] ?? {};
       groups.forEach((group, items) {
         for (var item in items) {
-          changes.add(ScheduleChange(
-            type: ChangeType.removed,
-            date: date,
-            group: group,
-            oldItem: item,
-            description: 'Удален день: $date - ${item.subject}',
-          ));
+          changes.add(
+            ScheduleChange(
+              type: ChangeType.removed,
+              date: date,
+              group: group,
+              oldItem: item,
+              description: 'Удален день: $date - ${item.subject}',
+            ),
+          );
           removedCount++;
         }
       });
     }
 
     // Обрабатываем общие дни
-    final commonDates =
-        oldDates.where((date) => newDates.contains(date)).toSet();
+    final commonDates = oldDates
+        .where((date) => newDates.contains(date))
+        .toSet();
     for (var date in commonDates) {
       final oldGroups = oldSchedule[date] ?? {};
       final newGroups = newSchedule[date] ?? {};
@@ -137,13 +148,15 @@ class ScheduleDiffService {
       for (var group in addedGroups) {
         final items = newGroups[group] ?? [];
         for (var item in items) {
-          changes.add(ScheduleChange(
-            type: ChangeType.added,
-            date: date,
-            group: group,
-            newItem: item,
-            description: 'Добавлено: ${item.subject}',
-          ));
+          changes.add(
+            ScheduleChange(
+              type: ChangeType.added,
+              date: date,
+              group: group,
+              newItem: item,
+              description: 'Добавлено: ${item.subject}',
+            ),
+          );
           addedCount++;
         }
       }
@@ -152,20 +165,23 @@ class ScheduleDiffService {
       for (var group in removedGroups) {
         final items = oldGroups[group] ?? [];
         for (var item in items) {
-          changes.add(ScheduleChange(
-            type: ChangeType.removed,
-            date: date,
-            group: group,
-            oldItem: item,
-            description: 'Удалено: ${item.subject}',
-          ));
+          changes.add(
+            ScheduleChange(
+              type: ChangeType.removed,
+              date: date,
+              group: group,
+              oldItem: item,
+              description: 'Удалено: ${item.subject}',
+            ),
+          );
           removedCount++;
         }
       }
 
       // Общие группы - сравниваем занятия
-      final commonGroups =
-          oldGroupNames.where((group) => newGroupNames.contains(group)).toSet();
+      final commonGroups = oldGroupNames
+          .where((group) => newGroupNames.contains(group))
+          .toSet();
       for (var group in commonGroups) {
         final oldItems = oldGroups[group] ?? [];
         final newItems = newGroups[group] ?? [];
@@ -190,14 +206,16 @@ class ScheduleDiffService {
             .toList();
         for (var key in addedKeys) {
           final item = newItemsMap[key]!;
-          changes.add(ScheduleChange(
-            type: ChangeType.added,
-            date: date,
-            group: group,
-            newItem: item,
-            description:
-                'Добавлено: ${item.subject} (${item.lessonNumber} пара)',
-          ));
+          changes.add(
+            ScheduleChange(
+              type: ChangeType.added,
+              date: date,
+              group: group,
+              newItem: item,
+              description:
+                  'Добавлено: ${item.subject} (${item.lessonNumber} пара)',
+            ),
+          );
           addedCount++;
         }
 
@@ -207,13 +225,16 @@ class ScheduleDiffService {
             .toList();
         for (var key in removedKeys) {
           final item = oldItemsMap[key]!;
-          changes.add(ScheduleChange(
-            type: ChangeType.removed,
-            date: date,
-            group: group,
-            oldItem: item,
-            description: 'Удалено: ${item.subject} (${item.lessonNumber} пара)',
-          ));
+          changes.add(
+            ScheduleChange(
+              type: ChangeType.removed,
+              date: date,
+              group: group,
+              oldItem: item,
+              description:
+                  'Удалено: ${item.subject} (${item.lessonNumber} пара)',
+            ),
+          );
           removedCount++;
         }
 
@@ -226,14 +247,17 @@ class ScheduleDiffService {
           final newItem = newItemsMap[key]!;
 
           if (!_itemsEqual(oldItem, newItem)) {
-            changes.add(ScheduleChange(
-              type: ChangeType.modified,
-              date: date,
-              group: group,
-              oldItem: oldItem,
-              newItem: newItem,
-              description: 'Изменено: ${oldItem.subject} → ${newItem.subject}',
-            ));
+            changes.add(
+              ScheduleChange(
+                type: ChangeType.modified,
+                date: date,
+                group: group,
+                oldItem: oldItem,
+                newItem: newItem,
+                description:
+                    'Изменено: ${oldItem.subject} → ${newItem.subject}',
+              ),
+            );
             modifiedCount++;
           }
         }
@@ -250,9 +274,15 @@ class ScheduleDiffService {
     );
   }
 
-  /// Создает уникальный ключ для занятия
+  /// Ключ «места» занятия в дне: номер пары и подгруппа.
+  ///
+  /// Раньше в ключ входили ещё предмет, преподаватель и кабинет — ровно те
+  /// поля, которые потом сравнивал `_itemsEqual`. Из-за этого у совпавших
+  /// ключей всегда совпадало и содержимое, ветка "изменено" была
+  /// недостижима (modifiedCount всегда 0), а замена пары показывалась
+  /// пользователю как "удалено + добавлено".
   static String _getItemKey(ScheduleItem item) {
-    return '${item.lessonNumber}_${item.subgroup ?? 'no_subgroup'}_${item.subject}_${item.teacher}_${item.classroom}';
+    return '${item.lessonNumber}_${item.subgroup ?? 'no_subgroup'}';
   }
 
   /// Сравнивает два занятия на равенство
@@ -289,7 +319,8 @@ class ScheduleDiffService {
 
         for (var item in sortedItems) {
           buffer.write(
-              '${item.lessonNumber}_${item.subject}_${item.teacher}_${item.classroom}');
+            '${item.lessonNumber}_${item.subject}_${item.teacher}_${item.classroom}',
+          );
         }
       }
     }

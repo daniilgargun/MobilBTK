@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+
 import '../models/personalization_settings.dart';
+
 import 'package:shared_preferences/shared_preferences.dart';
+
 import 'dart:convert';
+
 import '../services/home_widget_service.dart';
 
 /// Провайдер для управления настройками персонализации

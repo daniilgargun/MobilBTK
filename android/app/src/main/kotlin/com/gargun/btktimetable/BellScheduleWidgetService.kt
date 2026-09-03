@@ -38,11 +38,7 @@ class BellScheduleRemoteViewsFactory(private val context: Context) : RemoteViews
         val widgetData = HomeWidgetPlugin.getData(context)
         isDark = widgetData.getBoolean("widget_theme_dark", true)
         pageIndex = widgetData.getInt("bell_schedule_page_index", 0)
-        try {
-            widgetColor = widgetData.getInt("widget_color", android.graphics.Color.parseColor("#2196F3"))
-        } catch (e: Exception) {
-            widgetColor = widgetData.getLong("widget_color", android.graphics.Color.parseColor("#2196F3").toLong()).toInt()
-        }
+        widgetColor = WidgetTheme.accentColor(context)
         
         val templatesString = widgetData.getString("bell_schedule_templates", "{}")
         try {

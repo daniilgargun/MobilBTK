@@ -47,6 +47,27 @@ class ScheduleItem {
     );
   }
 
+  // Сравнение по значению.
+  //
+  // Без него каждое обновление расписания создавало объекты с новым
+  // identityHashCode, ключи элементов списка менялись, и Flutter пересоздавал
+  // все карточки — список заметно моргал и заново проигрывал анимацию входа.
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is ScheduleItem &&
+        other.group == group &&
+        other.lessonNumber == lessonNumber &&
+        other.subgroup == subgroup &&
+        other.subject == subject &&
+        other.teacher == teacher &&
+        other.classroom == classroom;
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(group, lessonNumber, subgroup, subject, teacher, classroom);
+
   // Создает копию с измененными полями
   ScheduleItem copyWith({
     String? group,
@@ -65,25 +86,25 @@ class ScheduleItem {
       classroom: classroom ?? this.classroom,
     );
   }
-} 
+}
 
 // Модель для настроек подсказок поиска
 class SearchSuggestionSettings {
   // Включен ли режим "Избранное" вместо случайных подсказок
   final bool useFavorites;
-  
+
   // Список избранных групп
   final List<String> favoriteGroups;
-  
+
   // Список избранных преподавателей
   final List<String> favoriteTeachers;
-  
+
   // Список избранных кабинетов
   final List<String> favoriteClassrooms;
-  
+
   // Список избранных предметов
   final List<String> favoriteSubjects;
-  
+
   // Настройки отображения категорий
   final bool showGroups;
   final bool showTeachers;
@@ -156,23 +177,20 @@ class SearchSuggestionSettings {
       showSubjects: json['showSubjects'] ?? true,
     );
   }
-} 
+}
 
 // Модель для хранения текущего выбранного элемента в поиске
 class SearchEntity {
-  final String name;        // Имя группы/преподавателя/кабинета/предмета
-  final EntityType type;    // Тип элемента
+  final String name; // Имя группы/преподавателя/кабинета/предмета
+  final EntityType type; // Тип элемента
 
-  SearchEntity({
-    required this.name,
-    required this.type,
-  });
+  SearchEntity({required this.name, required this.type});
 }
 
 // Перечисление типов поисковых сущностей
 enum EntityType {
-  group,      // Группа
-  teacher,    // Преподаватель
-  classroom,  // Кабинет
-  subject     // Предмет
-} 
+  group, // Группа
+  teacher, // Преподаватель
+  classroom, // Кабинет
+  subject, // Предмет
+}

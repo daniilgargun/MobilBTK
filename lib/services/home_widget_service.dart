@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:home_widget/home_widget.dart';
 import 'package:intl/intl.dart';
@@ -33,27 +34,33 @@ class HomeWidgetService {
 
       // Проверяем расписание на сегодня
       if (scheduleData.containsKey(dateStr)) {
-        final todayLessons =
-            _filterLessons(scheduleData[dateStr]!, searchQuery);
+        final todayLessons = _filterLessons(
+          scheduleData[dateStr]!,
+          searchQuery,
+        );
 
         // Проверяем, закончились ли пары на сегодня
         bool isDayFinished = false;
         if (todayLessons.isNotEmpty) {
           final lastLesson = todayLessons.last;
-          final lessonEndTime = _getHardcodedLessonEndTime(
-              lastLesson.lessonNumber); // Use fallback for "is finished" check
-
-          // Создаем DateTime для конца последней пары
-          final endDateTime = DateTime(
-            today.year,
-            today.month,
-            today.day,
-            lessonEndTime.hour,
-            lessonEndTime.minute,
+          final lessonEndTime = _getLessonEndTime(
+            lastLesson.lessonNumber,
+            LessonTime.getDayType(today.weekday),
           );
 
-          if (today.isAfter(endDateTime)) {
-            isDayFinished = true;
+          if (lessonEndTime != null) {
+            // Создаем DateTime для конца последней пары
+            final endDateTime = DateTime(
+              today.year,
+              today.month,
+              today.day,
+              lessonEndTime.hour,
+              lessonEndTime.minute,
+            );
+
+            if (today.isAfter(endDateTime)) {
+              isDayFinished = true;
+            }
           }
         }
 
@@ -66,12 +73,18 @@ class HomeWidgetService {
 
       // Если на сегодня пусто или пары закончились, ищем ближайший день
       if (lessons.isEmpty) {
-        final sortedDates = scheduleData.keys.toList()
-          ..sort((a, b) => DateService.parseScheduleDate(a)
-              .compareTo(DateService.parseScheduleDate(b)));
+        // sortDateKeys не падает на нераспознанных ключах: раньше одна
+        // битая дата в архиве роняла сортировку, исключение улетало
+        // во внешний catch и виджет вообще не обновлялся.
+        final sortedDates = DateService.sortDateKeys(scheduleData.keys);
 
         for (final date in sortedDates) {
-          final parsedDate = DateService.parseScheduleDate(date);
+          final DateTime parsedDate;
+          try {
+            parsedDate = DateService.parseScheduleDate(date);
+          } catch (_) {
+            continue;
+          }
 
           // Ищем только будущие даты (или сегодня, если мы еще не проверяли его выше,
           // но выше мы уже проверили сегодня, так что ищем строго после сегодня)
@@ -87,7 +100,9 @@ class HomeWidgetService {
               targetDate = parsedDate;
 
               if (DateService.isSameDay(
-                  parsedDate, today.add(const Duration(days: 1)))) {
+                parsedDate,
+                today.add(const Duration(days: 1)),
+              )) {
                 title = 'Завтра, ${DateService.formatDateString(date)}';
               } else {
                 title = DateService.formatDateStringWithWeekday(date);
@@ -127,27 +142,39 @@ class HomeWidgetService {
     }
   }
 
-  // Fallback for logic 'is day finished' without full LessonTime access inside the sorting loop
-  // This mimics the old _getLessonEndTime just for the purpose of checking if today is over.
-  static TimeOfDay _getHardcodedLessonEndTime(int lessonNumber) {
-    switch (lessonNumber) {
-      case 1:
-        return const TimeOfDay(hour: 10, minute: 05);
-      case 2:
-        return const TimeOfDay(hour: 12, minute: 00);
-      case 3:
-        return const TimeOfDay(hour: 13, minute: 55);
-      case 4:
-        return const TimeOfDay(hour: 15, minute: 50);
-      case 5:
-        return const TimeOfDay(hour: 17, minute: 45);
-      case 6:
-        return const TimeOfDay(hour: 19, minute: 40);
-      case 7:
-        return const TimeOfDay(hour: 21, minute: 25);
-      default:
-        return const TimeOfDay(hour: 23, minute: 59);
+  /// Время окончания пары по данным [LessonTime] — единственного источника
+  /// расписания звонков.
+  ///
+  /// Раньше здесь была вторая таблица с жёстко прописанным временем, которая
+  /// расходилась с LessonTime (например, конец 1-й пары: 10:05 против
+  /// реальных 9:40) и вдобавок игнорировала тип дня. Из-за этого виджет
+  /// считал день законченным на 15–25 минут позже реального конца пар
+  /// и слишком долго показывал уже прошедшее расписание.
+  static TimeOfDay? _getLessonEndTime(int lessonNumber, String dayType) {
+    final times = LessonTime.getTimesForLesson(lessonNumber, dayType);
+    if (times.isEmpty) return null;
+
+    TimeOfDay? latest;
+    for (final time in times) {
+      final parsed = _parseTimeOfDay(time.end);
+      if (parsed == null) continue;
+      if (latest == null ||
+          parsed.hour * 60 + parsed.minute > latest.hour * 60 + latest.minute) {
+        latest = parsed;
+      }
     }
+    return latest;
+  }
+
+  /// Разбирает строку вида "9:40" / "09:40".
+  static TimeOfDay? _parseTimeOfDay(String value) {
+    final parts = value.split(':');
+    if (parts.length != 2) return null;
+    final hour = int.tryParse(parts[0].trim());
+    final minute = int.tryParse(parts[1].trim());
+    if (hour == null || minute == null) return null;
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+    return TimeOfDay(hour: hour, minute: minute);
   }
 
   /// Фильтрует уроки по поисковому запросу
@@ -168,8 +195,7 @@ class HomeWidgetService {
           lesson.teacher.toLowerCase().contains(lowercaseQuery) ||
           lesson.classroom.toLowerCase().contains(lowercaseQuery) ||
           lesson.subject.toLowerCase().contains(lowercaseQuery);
-    }).toList()
-      ..sort((a, b) => a.lessonNumber.compareTo(b.lessonNumber));
+    }).toList()..sort((a, b) => a.lessonNumber.compareTo(b.lessonNumber));
   }
 
   /// Сохраняет данные в виджет
@@ -206,7 +232,9 @@ class HomeWidgetService {
     await HomeWidget.saveWidgetData<String>('schedule_date', title);
     await HomeWidget.saveWidgetData<String>('widget_title', widgetTitle);
     await HomeWidget.saveWidgetData<String>(
-        'last_updated', DateFormat('HH:mm').format(DateTime.now()));
+      'last_updated',
+      DateFormat('HH:mm').format(DateTime.now()),
+    );
 
     await HomeWidget.updateWidget(
       name: _androidWidgetName,
@@ -264,7 +292,9 @@ class HomeWidgetService {
       }
 
       await HomeWidget.saveWidgetData<String>(
-          'bell_schedule_templates', jsonEncode(templates));
+        'bell_schedule_templates',
+        jsonEncode(templates),
+      );
 
       await HomeWidget.updateWidget(
         name: 'BellScheduleWidgetProvider',
@@ -278,7 +308,8 @@ class HomeWidgetService {
   }
 
   static List<Map<String, dynamic>> _generateBellScheduleForDayType(
-      String dayType) {
+    String dayType,
+  ) {
     final items = <Map<String, dynamic>>[];
     final times = LessonTime.lessonTimes[dayType] ?? [];
 
@@ -332,15 +363,9 @@ class HomeWidgetService {
           await HomeWidget.getWidgetData<bool>('widget_theme_dark') ?? true;
       final transparency =
           await HomeWidget.getWidgetData<int>('widget_transparency') ?? 0;
-      return {
-        'isDark': isDark,
-        'transparency': transparency,
-      };
+      return {'isDark': isDark, 'transparency': transparency};
     } catch (e) {
-      return {
-        'isDark': true,
-        'transparency': 0,
-      };
+      return {'isDark': true, 'transparency': 0};
     }
   }
 }

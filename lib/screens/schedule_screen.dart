@@ -3,20 +3,28 @@
  * Author: Daniil Gargun | Telegram: @Daniilgargun | Email: daniilgorgun38@gmail.com
  */
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+// ScrollCacheExtent объявлен в слое rendering и не реэкспортируется material.dart
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:provider/provider.dart';
+
 import '../providers/schedule_provider.dart';
 import '../providers/personalization_provider.dart';
 import '../models/schedule_model.dart';
 import '../models/personalization_settings.dart';
+
 import 'package:shared_preferences/shared_preferences.dart';
+
 import '../widgets/schedule_item_card.dart';
 import '../widgets/bell_schedule_dialog.dart';
 import '../widgets/error_snackbar.dart';
+
 import 'package:share_plus/share_plus.dart';
+
 import '../services/connectivity_service.dart';
 import '../services/date_service.dart';
-import 'package:flutter/foundation.dart';
 
 class ScheduleScreen extends StatefulWidget {
   const ScheduleScreen({super.key});
@@ -32,19 +40,32 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   int _currentPage = 0;
   static const String _searchQueryKey = 'last_search_query';
   static const EdgeInsets _listPadding = EdgeInsets.all(8);
-  static const Duration _animationDuration = Duration(milliseconds: 300);
-  bool _hasShownOfflineWarning = false;
-  bool _isLoading = false;
+  bool _isRestoring = false;
   bool _isShareButtonPressed = false;
   bool _isRefreshButtonPressed = false;
 
   // Кэш для отфильтрованных данных
-  Map<String, List<ScheduleItem>> _filteredCache = {};
+  final Map<String, List<ScheduleItem>> _filteredCache = {};
 
   // Подготовленные данные для всех дат
-  Map<String, List<ScheduleItem>> _preparedData = {};
+  final Map<String, List<ScheduleItem>> _preparedData = {};
+
+  // Ссылка на карту расписания, из которой построен _preparedData.
+  // Нужна, чтобы понять, что провайдер отдал новые данные: сравнение по
+  // количеству дней пропускало обновления, в которых число дней не изменилось,
+  // и экран показывал старое расписание.
+  Map<String, Map<String, List<ScheduleItem>>>? _preparedSource;
 
   ScheduleProvider? _scheduleProvider;
+
+  // Отложенное сохранение поискового запроса.
+  //
+  // Раньше каждое нажатие клавиши записывало запрос в SharedPreferences
+  // и полностью пересобирало виджет на главном экране: сериализация всего
+  // расписания в JSON плюс вызов через платформенный канал на каждый символ.
+  // При наборе это заметно подтормаживало ввод.
+  Timer? _searchSaveDebounce;
+  static const Duration _searchSaveDelay = Duration(milliseconds: 600);
 
   @override
   void didChangeDependencies() {
@@ -65,10 +86,29 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
   Future<void> _loadLastSearchQuery() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+
     final lastQuery = prefs.getString(_searchQueryKey) ?? '';
     setState(() {
       _searchQuery = lastQuery;
       _searchController.text = lastQuery;
+    });
+  }
+
+  void _onSearchChanged(String value, {bool immediate = false}) {
+    setState(() {
+      _searchQuery = value;
+    });
+
+    _searchSaveDebounce?.cancel();
+
+    if (immediate) {
+      _saveSearchQuery(value);
+      return;
+    }
+
+    _searchSaveDebounce = Timer(_searchSaveDelay, () {
+      if (mounted) _saveSearchQuery(value);
     });
   }
 
@@ -85,15 +125,52 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     return DateService.formatDateStringWithWeekday(dateStr);
   }
 
-  // Получает случайные подсказки из реальных данных
+  // Кэш подсказок.
+  //
+  // Раньше подсказки пересчитывались на каждой перерисовке, а зерном
+  // случайности служило текущее время — чипы перетасовывались буквально
+  // на каждом кадре и «прыгали» под пальцем. Теперь набор меняется только
+  // при смене данных или настроек подсказок.
+  List<String>? _cachedSuggestions;
+  int? _suggestionsSignature;
+  final int _suggestionSeed = DateTime.now().millisecondsSinceEpoch;
+
   List<String> _getRandomSuggestions(ScheduleProvider provider) {
+    final settings = provider.searchSettings;
+    final signature = Object.hash(
+      identityHashCode(provider.scheduleData),
+      settings.useFavorites,
+      settings.showGroups,
+      settings.showTeachers,
+      settings.showClassrooms,
+      settings.showSubjects,
+      settings.favoriteGroups.length,
+      settings.favoriteTeachers.length,
+      settings.favoriteClassrooms.length,
+      settings.favoriteSubjects.length,
+      provider.groups.length,
+      provider.teachers.length,
+    );
+
+    final cached = _cachedSuggestions;
+    if (cached != null && _suggestionsSignature == signature) {
+      return cached;
+    }
+
+    final result = _buildSuggestions(provider);
+    _suggestionsSignature = signature;
+    _cachedSuggestions = result;
+    return result;
+  }
+
+  List<String> _buildSuggestions(ScheduleProvider provider) {
     // Проверяем, включен ли режим избранного
     if (provider.searchSettings.useFavorites) {
       return provider.getFavoriteSuggestions();
     }
 
     final suggestions = <String>{};
-    final random = DateTime.now().millisecondsSinceEpoch;
+    final random = _suggestionSeed;
 
     // Получаем реальные данные
     if (provider.scheduleData != null && provider.scheduleData!.isNotEmpty) {
@@ -116,8 +193,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       // Добавляем случайного преподавателя
       if (provider.teachers.isNotEmpty &&
           provider.searchSettings.showTeachers) {
-        suggestions
-            .add(provider.teachers[(random ~/ 2) % provider.teachers.length]);
+        suggestions.add(
+          provider.teachers[(random ~/ 2) % provider.teachers.length],
+        );
       }
 
       // Добавляем случайный кабинет
@@ -145,16 +223,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   Widget _buildSearchChip(String label) {
     return ActionChip(
       label: Text(label),
-      backgroundColor: Theme.of(context)
-          .colorScheme
-          .surfaceContainerHighest
+      backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest
           .withAlpha((0.7 * 255).toInt()),
       onPressed: () {
-        setState(() {
-          _searchController.text = label;
-          _searchQuery = label;
-          _saveSearchQuery(label);
-        });
+        _searchController.text = label;
+        // Выбор подсказки — однократное действие, сохраняем сразу.
+        _onSearchChanged(label, immediate: true);
       },
     );
   }
@@ -193,11 +267,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
               'Например: "Физика", "Математика"',
             ),
             const SizedBox(height: 12),
-            _buildSearchInfoItem(
-              Icons.room,
-              'Кабинет',
-              'Номер: "401", "О37"',
-            ),
+            _buildSearchInfoItem(Icons.room, 'Кабинет', 'Номер: "401", "О37"'),
           ],
         ),
         actions: [
@@ -221,10 +291,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                title,
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
+              Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
               Text(
                 example,
                 style: TextStyle(
@@ -260,9 +327,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         child: Text(
           _formatDate(date),
           key: ValueKey<String>(date), // Важно для анимации
-          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+          style: Theme.of(context).textTheme.headlineSmall
+              ?.copyWith(fontWeight: FontWeight.bold),
           textAlign: TextAlign.left,
         ),
       ),
@@ -270,52 +336,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   }
 
   // Добавил точки внизу для навигации между днями
-  Widget _buildPageDots(List<String> dates) {
-    return Positioned(
-      bottom: 16,
-      left: 0,
-      right: 0,
-      child: Center(
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-          decoration: BoxDecoration(
-            color: Theme.of(context)
-                .colorScheme
-                .surface
-                .withAlpha((0.8 * 255).toInt()),
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withAlpha((0.1 * 255).toInt()),
-                blurRadius: 4,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize
-                .min, // Это сделает контейнер по размеру содержимого
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(dates.length, (index) {
-              return AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
-                margin: const EdgeInsets.symmetric(horizontal: 4),
-                width: 10,
-                height: 10,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: _currentPage == index
-                      ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context).colorScheme.surfaceContainerHighest,
-                ),
-              );
-            }),
-          ),
-        ),
-      ),
-    );
-  }
-
   // Функция для форматирования текста при отправке расписания
   String _formatScheduleForSharing(List<ScheduleItem> lessons, String date) {
     final buffer = StringBuffer();
@@ -358,31 +378,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     }
   }
 
-  // Проверяет, есть ли расписание для текущего фильтра
-  bool _hasScheduleForFilter(
-      Map<String, Map<String, List<ScheduleItem>>> daySchedule) {
-    if (_searchQuery.isEmpty) return true;
-
-    final query = _searchQuery.toLowerCase();
-    for (var groupSchedule in daySchedule.values) {
-      for (var lessons in groupSchedule.values) {
-        for (var lesson in lessons) {
-          if (lesson.group.toLowerCase().contains(query) ||
-              lesson.teacher.toLowerCase().contains(query) ||
-              lesson.classroom.toLowerCase().contains(query) ||
-              lesson.subject.toLowerCase().contains(query)) {
-            return true;
-          }
-        }
-      }
-    }
-    return false;
-  }
-
   // Подготавливаем данные для всех дат
   void _prepareData(ScheduleProvider provider) {
     if (provider.scheduleData == null) return;
 
+    _preparedSource = provider.scheduleData;
     _preparedData.clear();
     _filteredCache.clear();
 
@@ -401,7 +401,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
     // Проверяем, не вышли ли мы за пределы доступных дней после обновления данных
     if (provider.scheduleData!.isNotEmpty) {
-      if (_currentPage >= provider.scheduleData!.length) {
+      if (_currentPage >= provider.scheduleData!.length || _currentPage < 0) {
         _currentPage = provider.scheduleData!.length - 1;
         // Обновляем позицию PageController при изменении индекса
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -440,29 +440,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     return filteredLessons;
   }
 
-  // Очищаем кэш при изменении поиска
-  void _clearCache() {
-    _filteredCache.clear();
-  }
-
   @override
   Widget build(BuildContext context) {
-    // Определяем текущую тему
-    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-
-    // Цвета для кнопки обновления (делаем более прозрачными)
-    final buttonColor = isDarkMode
-        ? const Color(0xFF194874)
-            .withAlpha((0.5 * 255).toInt()) // Увеличили прозрачность
-        : Colors.white.withAlpha((0.4 * 255).toInt()); // Увеличили прозрачность
-
-    // Цвета для индикаторов
-    final activeIndicatorColor =
-        isDarkMode ? Colors.white : const Color(0xFF194874);
-    final inactiveIndicatorColor = isDarkMode
-        ? Colors.white.withAlpha((0.3 * 255).toInt())
-        : const Color(0xFF194874).withAlpha((0.3 * 255).toInt());
-
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.surface,
       appBar: AppBar(
@@ -482,10 +461,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       ),
       body: Consumer<ScheduleProvider>(
         builder: (context, provider, child) {
-          // Подготавливаем данные при первой загрузке или обновлении расписания
+          // Подготавливаем данные при первой загрузке или обновлении расписания.
+          // Сравниваем именно саму карту: провайдер при каждом обновлении
+          // присваивает новый экземпляр, поэтому изменения внутри дня
+          // (замена пары, смена кабинета) тоже попадут на экран.
           if (provider.scheduleData != null &&
-              (_preparedData.isEmpty ||
-                  provider.scheduleData!.length != _preparedData.length)) {
+              !identical(_preparedSource, provider.scheduleData)) {
             _prepareData(provider);
           }
 
@@ -500,7 +481,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           if (provider.errorMessage != null) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               final message = provider.errorMessage!;
-              final isWarning = message.contains("Новых дней") ||
+              final isWarning =
+                  message.contains("Новых дней") ||
                   message.contains("Слишком частые запросы");
 
               ScaffoldMessenger.of(context).showSnackBar(
@@ -512,9 +494,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                         color: Colors.white,
                       ),
                       const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(message),
-                      ),
+                      Expanded(child: Text(message)),
                     ],
                   ),
                   backgroundColor: isWarning ? Colors.orange : Colors.red,
@@ -529,17 +509,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           // Показываем успешные сообщения
           if (provider.successMessage != null) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              CustomSnackBar.showSuccess(
-                context,
-                provider.successMessage!,
-              );
+              CustomSnackBar.showSuccess(context, provider.successMessage!);
               provider.dismissSuccess();
             });
           }
 
           // Проверяем, есть ли данные в fullScheduleData, но нет в scheduleData
-          final hasArchiveButNoCurrentData = provider.fullScheduleData !=
-                  null &&
+          final hasArchiveButNoCurrentData =
+              provider.fullScheduleData != null &&
               provider.fullScheduleData!.isNotEmpty &&
               (provider.scheduleData == null || provider.scheduleData!.isEmpty);
 
@@ -567,24 +544,43 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                       const SizedBox(height: 16),
                       if (hasArchiveButNoCurrentData)
                         ElevatedButton.icon(
-                          onPressed: () async {
-                            setState(() {
-                              _isLoading = true;
-                            });
-                            await provider.syncScheduleData();
-                            setState(() {
-                              _isLoading = false;
-                              // Обновляем кэш
-                              _prepareData(provider);
-                            });
-                          },
-                          icon: const Icon(Icons.sync_problem),
-                          label: const Text('Восстановить расписание'),
+                          onPressed: _isRestoring
+                              ? null
+                              : () async {
+                                  setState(() => _isRestoring = true);
+                                  try {
+                                    await provider.syncScheduleData();
+                                  } finally {
+                                    if (mounted) {
+                                      setState(() {
+                                        _isRestoring = false;
+                                        _prepareData(provider);
+                                      });
+                                    }
+                                  }
+                                },
+                          icon: _isRestoring
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(Icons.sync_problem),
+                          label: Text(
+                            _isRestoring
+                                ? 'Восстановление...'
+                                : 'Восстановить расписание',
+                          ),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                                Theme.of(context).colorScheme.primary,
-                            foregroundColor:
-                                Theme.of(context).colorScheme.onPrimary,
+                            backgroundColor: Theme.of(context)
+                                .colorScheme
+                                .primary,
+                            foregroundColor: Theme.of(context)
+                                .colorScheme
+                                .onPrimary,
                           ),
                         ),
                       if (!provider.isOffline && !hasArchiveButNoCurrentData)
@@ -595,10 +591,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                       if (provider.isOffline)
                         Text(
                           'Подключитесь к интернету для загрузки расписания',
-                          style:
-                              Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    color: Theme.of(context).colorScheme.error,
-                                  ),
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: Theme.of(context).colorScheme.error,
+                              ),
                           textAlign: TextAlign.center,
                         ),
                     ],
@@ -612,7 +608,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     AnimatedSwitcher(
                       duration: const Duration(milliseconds: 300),
                       child: _buildDateHeader(
-                          provider.scheduleData!.keys.toList()[_currentPage]),
+                        provider.orderedDates[_currentPage.clamp(
+                          0,
+                          provider.orderedDates.length - 1,
+                        )],
+                      ),
                     ),
                     Expanded(
                       child: Stack(
@@ -626,10 +626,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                             },
                             itemCount: provider.scheduleData!.length,
                             itemBuilder: (context, index) {
-                              final date =
-                                  provider.scheduleData!.keys.toList()[index];
-                              final filteredLessons =
-                                  _getFilteredLessons(date, _searchQuery);
+                              final date = provider.orderedDates[index];
+                              final filteredLessons = _getFilteredLessons(
+                                date,
+                                _searchQuery,
+                              );
 
                               return Stack(
                                 children: [
@@ -660,7 +661,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                                                       .colorScheme
                                                       .onSurface
                                                       .withAlpha(
-                                                          (0.7 * 255).toInt()),
+                                                        (0.7 * 255).toInt(),
+                                                      ),
                                                 ),
                                           ),
                                         ],
@@ -668,81 +670,102 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                                     )
                                   else
                                     AnimatedSwitcher(
-                                      duration:
-                                          const Duration(milliseconds: 300),
-                                      transitionBuilder: (Widget child,
-                                          Animation<double> animation) {
-                                        return FadeTransition(
-                                          opacity: animation,
-                                          child: SlideTransition(
-                                            position: Tween<Offset>(
-                                              begin: Offset(
-                                                  _currentPage > index
-                                                      ? -1.0
-                                                      : 1.0,
-                                                  0.0),
-                                              end: Offset.zero,
-                                            ).animate(CurvedAnimation(
-                                              parent: animation,
-                                              curve: Curves.easeInOut,
-                                            )),
-                                            child: child,
-                                          ),
-                                        );
-                                      },
+                                      duration: const Duration(
+                                        milliseconds: 300,
+                                      ),
+                                      transitionBuilder:
+                                          (
+                                            Widget child,
+                                            Animation<double> animation,
+                                          ) {
+                                            return FadeTransition(
+                                              opacity: animation,
+                                              child: SlideTransition(
+                                                position:
+                                                    Tween<Offset>(
+                                                      begin: Offset(
+                                                        _currentPage > index
+                                                            ? -1.0
+                                                            : 1.0,
+                                                        0.0,
+                                                      ),
+                                                      end: Offset.zero,
+                                                    ).animate(
+                                                      CurvedAnimation(
+                                                        parent: animation,
+                                                        curve: Curves.easeInOut,
+                                                      ),
+                                                    ),
+                                                child: child,
+                                              ),
+                                            );
+                                          },
                                       child: Consumer<PersonalizationProvider>(
-                                        builder: (context,
-                                            personalizationProvider, _) {
+                                        builder: (context, personalizationProvider, _) {
                                           final displayFormat =
                                               personalizationProvider
-                                                  .settings.displayFormat;
+                                                  .settings
+                                                  .displayFormat;
 
                                           if (displayFormat ==
                                               DisplayFormat.grid) {
                                             // Сетка
                                             return GridView.builder(
                                               key: PageStorageKey(
-                                                  'schedule_grid_$date'),
+                                                'schedule_grid_$date',
+                                              ),
+                                              scrollCacheExtent:
+                                                  const ScrollCacheExtent.pixels(
+                                                    1000,
+                                                  ),
                                               gridDelegate:
                                                   const SliverGridDelegateWithFixedCrossAxisCount(
-                                                crossAxisCount: 2,
-                                                crossAxisSpacing: 4,
-                                                mainAxisSpacing: 4,
-                                                childAspectRatio: 1.15,
-                                              ),
+                                                    crossAxisCount: 2,
+                                                    crossAxisSpacing: 4,
+                                                    mainAxisSpacing: 4,
+                                                    // Карточка занимает высоту
+                                                    // по содержимому: при 1.15
+                                                    // почти половина карточки
+                                                    // оставалась пустой.
+                                                    childAspectRatio: 1.5,
+                                                  ),
                                               padding: const EdgeInsets.all(4),
-                                              cacheExtent: 1000,
                                               itemCount: filteredLessons.length,
                                               itemBuilder: (context, index) {
-                                                if (!mounted)
-                                                  return const SizedBox();
-
                                                 return TweenAnimationBuilder<
-                                                    double>(
+                                                  double
+                                                >(
                                                   tween: Tween(
-                                                      begin: 0.0, end: 1.0),
+                                                    begin: 0.0,
+                                                    end: 1.0,
+                                                  ),
                                                   duration: Duration(
-                                                      milliseconds:
-                                                          300 + (index * 50)),
+                                                    milliseconds:
+                                                        220 +
+                                                        (index.clamp(0, 5) *
+                                                            40),
+                                                  ),
                                                   curve: Curves.easeOut,
-                                                  builder:
-                                                      (context, value, child) {
+                                                  builder: (context, value, child) {
                                                     return Opacity(
                                                       opacity: value,
                                                       child:
                                                           Transform.translate(
-                                                        offset: Offset(0,
-                                                            20 * (1 - value)),
-                                                        child: child,
-                                                      ),
+                                                            offset: Offset(
+                                                              0,
+                                                              20 * (1 - value),
+                                                            ),
+                                                            child: child,
+                                                          ),
                                                     );
                                                   },
                                                   child: RepaintBoundary(
                                                     child: ScheduleItemCard(
                                                       key: ValueKey(
-                                                          '${filteredLessons[index].hashCode}_$index'),
-                                                      item: filteredLessons[
-                                                          index],
+                                                        filteredLessons[index],
+                                                      ),
+                                                      item:
+                                                          filteredLessons[index],
                                                       index: index,
                                                       date: _parseDate(date),
                                                       isCompact: true,
@@ -755,40 +778,49 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                                             // Список
                                             return ListView.builder(
                                               key: PageStorageKey(
-                                                  'schedule_list_$date'),
+                                                'schedule_list_$date',
+                                              ),
+                                              scrollCacheExtent:
+                                                  const ScrollCacheExtent.pixels(
+                                                    1000,
+                                                  ),
                                               itemCount: filteredLessons.length,
                                               padding: _listPadding,
-                                              cacheExtent: 1000,
                                               itemBuilder: (context, index) {
-                                                if (!mounted)
-                                                  return const SizedBox();
-
                                                 return TweenAnimationBuilder<
-                                                    double>(
+                                                  double
+                                                >(
                                                   tween: Tween(
-                                                      begin: 0.0, end: 1.0),
+                                                    begin: 0.0,
+                                                    end: 1.0,
+                                                  ),
                                                   duration: Duration(
-                                                      milliseconds:
-                                                          300 + (index * 50)),
+                                                    milliseconds:
+                                                        220 +
+                                                        (index.clamp(0, 5) *
+                                                            40),
+                                                  ),
                                                   curve: Curves.easeOut,
-                                                  builder:
-                                                      (context, value, child) {
+                                                  builder: (context, value, child) {
                                                     return Opacity(
                                                       opacity: value,
                                                       child:
                                                           Transform.translate(
-                                                        offset: Offset(0,
-                                                            20 * (1 - value)),
-                                                        child: child,
-                                                      ),
+                                                            offset: Offset(
+                                                              0,
+                                                              20 * (1 - value),
+                                                            ),
+                                                            child: child,
+                                                          ),
                                                     );
                                                   },
                                                   child: RepaintBoundary(
                                                     child: ScheduleItemCard(
                                                       key: ValueKey(
-                                                          '${filteredLessons[index].hashCode}_$index'),
-                                                      item: filteredLessons[
-                                                          index],
+                                                        filteredLessons[index],
+                                                      ),
+                                                      item:
+                                                          filteredLessons[index],
                                                       index: index,
                                                       date: _parseDate(date),
                                                     ),
@@ -815,12 +847,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                               child: Center(
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 16, vertical: 8),
+                                    horizontal: 16,
+                                    vertical: 8,
+                                  ),
                                   decoration: BoxDecoration(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .surface
-                                        .withOpacity(0.8),
+                                    color: Theme.of(context).colorScheme.surface
+                                        .withValues(alpha: 0.8),
                                     borderRadius: BorderRadius.circular(30),
                                   ),
                                   child: Row(
@@ -836,20 +868,31 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                                             10) {
                                           // Вычисляем диапазон отображаемых точек
                                           int start = _currentPage - 4;
-                                          if (start < 0) start = 0;
+                                          if (start < 0) {
+                                            start = 0;
+                                          }
                                           if (start >
-                                              provider.scheduleData!.keys
+                                              provider
+                                                      .scheduleData!
+                                                      .keys
                                                       .length -
-                                                  10)
-                                            start = provider
-                                                    .scheduleData!.keys.length -
+                                                  10) {
+                                            start =
+                                                provider
+                                                    .scheduleData!
+                                                    .keys
+                                                    .length -
                                                 10;
+                                          }
 
                                           // Если индекс вне диапазона, не показываем
                                           if (index + start >=
                                               provider
-                                                  .scheduleData!.keys.length)
+                                                  .scheduleData!
+                                                  .keys
+                                                  .length) {
                                             return const SizedBox.shrink();
+                                          }
 
                                           // Проверяем, соответствует ли точка текущей странице
                                           bool isCurrentPage =
@@ -857,20 +900,22 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
                                           return AnimatedContainer(
                                             duration: const Duration(
-                                                milliseconds: 300),
+                                              milliseconds: 300,
+                                            ),
                                             margin: const EdgeInsets.symmetric(
-                                                horizontal: 4),
+                                              horizontal: 4,
+                                            ),
                                             height: 12,
                                             width: 12,
                                             decoration: BoxDecoration(
                                               color: isCurrentPage
                                                   ? Theme.of(context)
-                                                      .colorScheme
-                                                      .primary
+                                                        .colorScheme
+                                                        .primary
                                                   : Theme.of(context)
-                                                      .colorScheme
-                                                      .surfaceVariant
-                                                      .withOpacity(0.5),
+                                                        .colorScheme
+                                                        .surfaceContainerHighest
+                                                        .withValues(alpha: 0.5),
                                               shape: BoxShape.circle,
                                             ),
                                           );
@@ -878,20 +923,22 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                                           // Если дней меньше 10, показываем все точки
                                           return AnimatedContainer(
                                             duration: const Duration(
-                                                milliseconds: 300),
+                                              milliseconds: 300,
+                                            ),
                                             margin: const EdgeInsets.symmetric(
-                                                horizontal: 4),
+                                              horizontal: 4,
+                                            ),
                                             height: 12,
                                             width: 12,
                                             decoration: BoxDecoration(
                                               color: _currentPage == index
                                                   ? Theme.of(context)
-                                                      .colorScheme
-                                                      .primary
+                                                        .colorScheme
+                                                        .primary
                                                   : Theme.of(context)
-                                                      .colorScheme
-                                                      .surfaceVariant
-                                                      .withOpacity(0.5),
+                                                        .colorScheme
+                                                        .surfaceContainerHighest
+                                                        .withValues(alpha: 0.5),
                                               shape: BoxShape.circle,
                                             ),
                                           );
@@ -914,13 +961,15 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       floatingActionButton: Builder(
         builder: (fabContext) {
           final colorScheme = Theme.of(fabContext).colorScheme;
-          final shareBackground = colorScheme.primaryContainer.withOpacity(0.8);
+          final shareBackground = colorScheme.primaryContainer.withValues(
+            alpha: 0.8,
+          );
           final shareForeground = colorScheme.onPrimaryContainer;
-          final refreshEnabledBackground =
-              colorScheme.primaryContainer.withOpacity(0.8);
+          final refreshEnabledBackground = colorScheme.primaryContainer
+              .withValues(alpha: 0.8);
           final refreshEnabledForeground = colorScheme.onPrimaryContainer;
-          final refreshDisabledBackground =
-              colorScheme.surfaceVariant.withOpacity(0.5);
+          final refreshDisabledBackground = colorScheme.surfaceContainerHighest
+              .withValues(alpha: 0.5);
           final refreshDisabledForeground = colorScheme.onSurfaceVariant;
 
           return Column(
@@ -970,8 +1019,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                       curve: Curves.easeInOutCubic,
                       child: FloatingActionButton(
                         heroTag: "refreshBtn",
-                        onPressed:
-                            isOffline ? null : () => provider.updateSchedule(),
+                        onPressed: isOffline
+                            ? null
+                            : () => provider.updateSchedule(),
                         backgroundColor: isOffline
                             ? refreshDisabledBackground
                             : refreshEnabledBackground,
@@ -994,11 +1044,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
   @override
   void dispose() {
+    _searchSaveDebounce?.cancel();
     _searchController.dispose();
     _pageController.dispose();
     _filteredCache.clear();
     _preparedData.clear();
-    _hasShownOfflineWarning = false;
 
     // Удаляем слушатель при уничтожении виджета
     _scheduleProvider?.removeListener(_onScheduleDataChanged);
@@ -1016,30 +1066,42 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   // Функция для кнопки "Поделиться"
   // Собирает расписание в текст и открывает меню отправки
   void _shareSchedule() async {
-    if (context.read<ScheduleProvider>().scheduleData != null) {
-      final provider = context.read<ScheduleProvider>();
-      final dates = provider.scheduleData!.keys.toList()..sort();
-      final date = dates[_currentPage];
-      final daySchedule = provider.scheduleData![date]!;
-      final allLessons = <ScheduleItem>[];
+    final provider = context.read<ScheduleProvider>();
+    if (provider.scheduleData == null) return;
 
-      for (var groupLessons in daySchedule.values) {
-        allLessons.addAll(groupLessons.toList());
-      }
-
-      final filteredLessons = allLessons.where((lesson) {
-        final query = _searchQuery.toLowerCase();
-        return lesson.group.toLowerCase().contains(query) ||
-            lesson.teacher.toLowerCase().contains(query) ||
-            lesson.classroom.toLowerCase().contains(query) ||
-            lesson.subject.toLowerCase().contains(query);
-      }).toList();
-
-      if (filteredLessons.isNotEmpty) {
-        final textToShare = _formatScheduleForSharing(filteredLessons, date);
-        await Share.share(textToShare);
-      }
+    // Раньше список дат сортировался как текст (`..sort()`), а PageView
+    // использовал порядок ключей Map — из-за этого «Поделиться» отправляло
+    // расписание не того дня, который открыт на экране.
+    final dates = provider.orderedDates;
+    if (dates.isEmpty || _currentPage < 0 || _currentPage >= dates.length) {
+      return;
     }
+
+    final date = dates[_currentPage];
+    final filteredLessons = _getFilteredLessons(date, _searchQuery);
+
+    if (filteredLessons.isEmpty) {
+      if (mounted) {
+        CustomSnackBar.showWarning(
+          context,
+          'Нечего отправить: на этот день нет расписания по вашему запросу',
+        );
+      }
+      return;
+    }
+
+    final textToShare = _formatScheduleForSharing(filteredLessons, date);
+    final box = context.findRenderObject() as RenderBox?;
+
+    await SharePlus.instance.share(
+      ShareParams(
+        text: textToShare,
+        // Нужно для корректного позиционирования листа "Поделиться" на iPad.
+        sharePositionOrigin: box == null
+            ? null
+            : box.localToGlobal(Offset.zero) & box.size,
+      ),
+    );
   }
 
   // Загружает данные при запуске
@@ -1092,8 +1154,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           return AlertDialog(
             title: Row(
               children: [
-                Icon(Icons.settings,
-                    color: Theme.of(context).colorScheme.primary),
+                Icon(
+                  Icons.settings,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
                 const SizedBox(width: 8),
                 Expanded(child: const Text('Настройки подсказок')),
               ],
@@ -1113,7 +1177,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     value: settings.useFavorites,
                     onChanged: (value) async {
                       await provider.toggleFavoritesMode(value);
-                      setState(() {});
+                      if (mounted) setState(() {});
                     },
                   ),
 
@@ -1132,7 +1196,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     value: settings.showGroups,
                     onChanged: (value) async {
                       await provider.toggleShowGroups(value ?? true);
-                      setState(() {});
+                      if (mounted) setState(() {});
                     },
                   ),
                   CheckboxListTile(
@@ -1140,7 +1204,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     value: settings.showTeachers,
                     onChanged: (value) async {
                       await provider.toggleShowTeachers(value ?? true);
-                      setState(() {});
+                      if (mounted) setState(() {});
                     },
                   ),
                   CheckboxListTile(
@@ -1148,7 +1212,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     value: settings.showClassrooms,
                     onChanged: (value) async {
                       await provider.toggleShowClassrooms(value ?? true);
-                      setState(() {});
+                      if (mounted) setState(() {});
                     },
                   ),
                   CheckboxListTile(
@@ -1156,7 +1220,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     value: settings.showSubjects,
                     onChanged: (value) async {
                       await provider.toggleShowSubjects(value ?? true);
-                      setState(() {});
+                      if (mounted) setState(() {});
                     },
                   ),
 
@@ -1189,8 +1253,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
                       // Группы
                       if (settings.favoriteGroups.isNotEmpty) ...[
-                        const Text('Группы:',
-                            style: TextStyle(fontWeight: FontWeight.w500)),
+                        const Text(
+                          'Группы:',
+                          style: TextStyle(fontWeight: FontWeight.w500),
+                        ),
                         _buildFavoritesChips(
                           settings.favoriteGroups,
                           (item) => provider.removeFavoriteGroup(item),
@@ -1201,8 +1267,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                       // Преподаватели
                       if (settings.favoriteTeachers.isNotEmpty) ...[
                         const SizedBox(height: 8),
-                        const Text('Преподаватели:',
-                            style: TextStyle(fontWeight: FontWeight.w500)),
+                        const Text(
+                          'Преподаватели:',
+                          style: TextStyle(fontWeight: FontWeight.w500),
+                        ),
                         _buildFavoritesChips(
                           settings.favoriteTeachers,
                           (item) => provider.removeFavoriteTeacher(item),
@@ -1213,8 +1281,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                       // Кабинеты
                       if (settings.favoriteClassrooms.isNotEmpty) ...[
                         const SizedBox(height: 8),
-                        const Text('Кабинеты:',
-                            style: TextStyle(fontWeight: FontWeight.w500)),
+                        const Text(
+                          'Кабинеты:',
+                          style: TextStyle(fontWeight: FontWeight.w500),
+                        ),
                         _buildFavoritesChips(
                           settings.favoriteClassrooms,
                           (item) => provider.removeFavoriteClassroom(item),
@@ -1225,8 +1295,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                       // Предметы
                       if (settings.favoriteSubjects.isNotEmpty) ...[
                         const SizedBox(height: 8),
-                        const Text('Предметы:',
-                            style: TextStyle(fontWeight: FontWeight.w500)),
+                        const Text(
+                          'Предметы:',
+                          style: TextStyle(fontWeight: FontWeight.w500),
+                        ),
                         _buildFavoritesChips(
                           settings.favoriteSubjects,
                           (item) => provider.removeFavoriteSubject(item),
@@ -1237,7 +1309,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                       const Text(
                         'У вас пока нет избранных элементов. Добавьте их, чтобы они отображались в подсказках.',
                         style: TextStyle(
-                            fontStyle: FontStyle.italic, color: Colors.grey),
+                          fontStyle: FontStyle.italic,
+                          color: Colors.grey,
+                        ),
                       ),
                     ],
                   ],
@@ -1258,18 +1332,23 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
   // Построение чипов для избранных элементов с возможностью удаления
   Widget _buildFavoritesChips(
-      List<String> items, Function(String) onRemove, StateSetter setState) {
+    List<String> items,
+    Function(String) onRemove,
+    StateSetter setState,
+  ) {
     return Wrap(
       spacing: 8,
       children: items
-          .map((item) => Chip(
-                label: Text(item),
-                deleteIcon: const Icon(Icons.close, size: 16),
-                onDeleted: () async {
-                  await onRemove(item);
-                  setState(() {});
-                },
-              ))
+          .map(
+            (item) => Chip(
+              label: Text(item),
+              deleteIcon: const Icon(Icons.close, size: 16),
+              onDeleted: () async {
+                await onRemove(item);
+                if (mounted) setState(() {});
+              },
+            ),
+          )
           .toList(),
     );
   }
@@ -1291,10 +1370,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           List<String> filteredItems = textController.text.isEmpty
               ? availableItems
               : availableItems
-                  .where((item) => item
-                      .toLowerCase()
-                      .contains(textController.text.toLowerCase()))
-                  .toList();
+                    .where(
+                      (item) => item.toLowerCase().contains(
+                        textController.text.toLowerCase(),
+                      ),
+                    )
+                    .toList();
 
           // Ограничиваем количество элементов для отображения
           final displayItems = filteredItems.take(5).toList();
@@ -1313,9 +1394,13 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                   items: const [
                     DropdownMenuItem(value: 'group', child: Text('Группа')),
                     DropdownMenuItem(
-                        value: 'teacher', child: Text('Преподаватель')),
+                      value: 'teacher',
+                      child: Text('Преподаватель'),
+                    ),
                     DropdownMenuItem(
-                        value: 'classroom', child: Text('Кабинет')),
+                      value: 'classroom',
+                      child: Text('Кабинет'),
+                    ),
                     DropdownMenuItem(value: 'subject', child: Text('Предмет')),
                   ],
                   onChanged: (value) {
@@ -1393,30 +1478,38 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: displayItems
-                          .map((item) => InkWell(
-                                onTap: () async {
-                                  // Добавляем выбранный элемент в избранное
-                                  await _addToFavorites(
-                                      category, item, provider);
+                          .map(
+                            (item) => InkWell(
+                              onTap: () async {
+                                final navigator = Navigator.of(context);
+                                final messenger = ScaffoldMessenger.of(context);
 
-                                  // Показываем сообщение об успешном добавлении
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content:
-                                          Text('Добавлено в избранное: $item'),
-                                      duration: const Duration(seconds: 1),
+                                // Добавляем выбранный элемент в избранное
+                                await _addToFavorites(category, item, provider);
+
+                                if (!mounted) return;
+
+                                // Показываем сообщение об успешном добавлении
+                                messenger.showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      'Добавлено в избранное: $item',
                                     ),
-                                  );
+                                    duration: const Duration(seconds: 1),
+                                  ),
+                                );
 
-                                  // Закрываем диалог
-                                  Navigator.of(context).pop();
-                                },
-                                child: Padding(
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 8.0),
-                                  child: Text(item),
+                                // Закрываем диалог
+                                navigator.pop();
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 8.0,
                                 ),
-                              ))
+                                child: Text(item),
+                              ),
+                            ),
+                          )
                           .toList(),
                     ),
                   )
@@ -1432,24 +1525,30 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
               TextButton(
                 onPressed: () async {
                   final value = textController.text.trim();
+                  final navigator = Navigator.of(context);
+                  final messenger = ScaffoldMessenger.of(context);
+
                   if (value.isNotEmpty && availableItems.contains(value)) {
                     await _addToFavorites(category, value, provider);
 
+                    if (!mounted) return;
+
                     // Показываем сообщение об успешном добавлении
-                    ScaffoldMessenger.of(context).showSnackBar(
+                    messenger.showSnackBar(
                       SnackBar(
                         content: Text('Добавлено в избранное: $value'),
                         duration: const Duration(seconds: 1),
                       ),
                     );
 
-                    Navigator.of(context).pop();
+                    navigator.pop();
                   } else if (value.isNotEmpty) {
                     // Показываем предупреждение о неверном элементе
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
                         content: Text(
-                            'Пожалуйста, выберите существующий элемент из списка'),
+                          'Пожалуйста, выберите существующий элемент из списка',
+                        ),
                         duration: Duration(seconds: 2),
                       ),
                     );
@@ -1466,7 +1565,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
   // Вспомогательный метод для добавления элемента в избранное
   Future<void> _addToFavorites(
-      String category, String value, ScheduleProvider provider) async {
+    String category,
+    String value,
+    ScheduleProvider provider,
+  ) async {
     switch (category) {
       case 'group':
         await provider.addFavoriteGroup(value);
@@ -1495,12 +1597,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
               Expanded(
                 child: TextField(
                   controller: _searchController,
-                  onChanged: (value) {
-                    setState(() {
-                      _searchQuery = value;
-                      _saveSearchQuery(value);
-                    });
-                  },
+                  onChanged: _onSearchChanged,
                   decoration: InputDecoration(
                     labelText: 'Поиск',
                     hintText: 'Группа, преподаватель, предмет или кабинет',
@@ -1510,11 +1607,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                         ? IconButton(
                             icon: const Icon(Icons.clear),
                             onPressed: () {
-                              setState(() {
-                                _searchController.clear();
-                                _searchQuery = '';
-                                _saveSearchQuery('');
-                              });
+                              _searchController.clear();
+                              _onSearchChanged('', immediate: true);
                             },
                           )
                         : null,
@@ -1540,7 +1634,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                   children: [
                     Padding(
                       padding: const EdgeInsets.only(
-                          top: 8.0, left: 4.0, bottom: 4.0),
+                        top: 8.0,
+                        left: 4.0,
+                        bottom: 4.0,
+                      ),
                       child: Text(
                         provider.searchSettings.useFavorites
                             ? 'Избранное:'

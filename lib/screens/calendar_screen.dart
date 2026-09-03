@@ -1,14 +1,21 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
 import 'package:table_calendar/table_calendar.dart';
+
 import '../providers/schedule_provider.dart';
 import '../models/schedule_model.dart';
 import '../models/note_model.dart';
 import '../providers/notes_provider.dart';
+
 import 'package:intl/intl.dart';
+
 import '../widgets/schedule_item_card.dart';
+
 import 'package:shared_preferences/shared_preferences.dart';
+
 import '../widgets/selection_dialog.dart';
 import '../services/date_service.dart';
 import '../services/cache_service.dart';
@@ -28,6 +35,19 @@ class _CalendarScreenState extends State<CalendarScreen> {
   String? _selectedTeacher;
   CalendarFormat _calendarFormat = CalendarFormat.month;
   final TextEditingController _noteController = TextEditingController();
+
+  // День, для которого текст заметки уже загружен в поле.
+  //
+  // Раньше текст подставлялся в контроллер при каждой перестройке, если он
+  // отличался от сохранённого. Сохранение шло на каждый символ и было
+  // асинхронным, поэтому во время быстрого набора провайдер успевал
+  // уведомить слушателей со старым значением — поле перезаписывалось,
+  // курсор прыгал в начало, часть символов терялась.
+  DateTime? _loadedNoteDay;
+
+  // Отложенная запись заметки в базу вместо записи на каждое нажатие.
+  Timer? _noteSaveDebounce;
+  static const Duration _noteSaveDelay = Duration(milliseconds: 500);
   static const String _filterKey = 'selected_filter';
   static const String _groupKey = 'selected_group';
   static const String _teacherKey = 'selected_teacher';
@@ -82,6 +102,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   Future<void> _loadSavedFormat() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+
     final savedFormat = prefs.getString('calendar_format') ?? 'month';
     setState(() {
       _savedFormat = _parseCalendarFormat(savedFormat);
@@ -89,8 +111,28 @@ class _CalendarScreenState extends State<CalendarScreen> {
     });
   }
 
-  void _prepareCalendarData() {
+  // Карты, из которых построен текущий кэш календаря.
+  // Провайдер уведомляет слушателей и по причинам, не связанным с данными
+  // (скрытие ошибки, смена офлайн-статуса, выбор группы). Без этой проверки
+  // весь кэш календаря очищался и перестраивался по всему архиву на каждое
+  // такое уведомление — на больших архивах это заметный подтормаживание.
+  Map<String, Map<String, List<ScheduleItem>>>? _calendarArchiveSource;
+  Map<String, Map<String, List<ScheduleItem>>>? _calendarCurrentSource;
+
+  void _prepareCalendarData({bool force = false}) {
     if (!mounted || _scheduleProvider == null) return;
+
+    if (!force &&
+        identical(
+          _calendarArchiveSource,
+          _scheduleProvider!.fullScheduleData,
+        ) &&
+        identical(_calendarCurrentSource, _scheduleProvider!.scheduleData)) {
+      return;
+    }
+
+    _calendarArchiveSource = _scheduleProvider!.fullScheduleData;
+    _calendarCurrentSource = _scheduleProvider!.scheduleData;
 
     try {
       // Получаем полные данные архива, а не только filtered data
@@ -124,7 +166,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
           _cacheService.setCalendarEvents(dateTime, allLessons);
         } catch (e) {
           debugPrint(
-              'Ошибка при подготовке данных календаря для даты $date: $e');
+            'Ошибка при подготовке данных календаря для даты $date: $e',
+          );
           // Продолжаем обработку других дат
         }
       }
@@ -149,7 +192,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
             _cacheService.setCalendarEvents(dateTime, allLessons);
           } catch (e) {
             debugPrint(
-                'Ошибка при подготовке текущих данных календаря для даты $date: $e');
+              'Ошибка при подготовке текущих данных календаря для даты $date: $e',
+            );
             // Продолжаем обработку других дат
           }
         }
@@ -219,6 +263,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+
     setState(() {
       _selectedFilter = prefs.getString(_filterKey) ?? 'all';
       _selectedGroup = prefs.getString(_groupKey);
@@ -277,11 +323,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
     return filteredLessons;
   }
 
-  // Преобразует номер месяца в строку для формата даты
-  String _getMonthStr(int month) {
-    return DateService.getMonthShortName(month);
-  }
-
   // Обновленный диалог выбора фильтра с красивым дизайном
   void _showFilterDialog() {
     showDialog(
@@ -296,8 +337,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.filter_list,
-                    color: Theme.of(context).colorScheme.primary),
+                Icon(
+                  Icons.filter_list,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
                 const SizedBox(width: 10),
                 const Text('Фильтр'),
               ],
@@ -311,16 +354,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 'all',
                 Icons.calendar_view_day,
               ),
-              _buildFilterOption(
-                'По группе',
-                'group',
-                Icons.group,
-              ),
-              _buildFilterOption(
-                'По преподавателю',
-                'teacher',
-                Icons.person,
-              ),
+              _buildFilterOption('По группе', 'group', Icons.group),
+              _buildFilterOption('По преподавателю', 'teacher', Icons.person),
             ],
           ),
         );
@@ -359,16 +394,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
           }
         },
         child: Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 12,
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
             children: [
-              Icon(icon,
-                  color: isSelected
-                      ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context).colorScheme.onSurface),
+              Icon(
+                icon,
+                color: isSelected
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.onSurface,
+              ),
               const SizedBox(width: 16),
               Expanded(
                 child: Text(
@@ -377,8 +411,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     color: isSelected
                         ? Theme.of(context).colorScheme.primary
                         : Theme.of(context).colorScheme.onSurface,
-                    fontWeight:
-                        isSelected ? FontWeight.bold : FontWeight.normal,
+                    fontWeight: isSelected
+                        ? FontWeight.bold
+                        : FontWeight.normal,
                   ),
                 ),
               ),
@@ -397,9 +432,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final groups = _scheduleProvider!.groups;
     if (groups.isEmpty) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Список групп пуст')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Список групп пуст')));
       }
       return;
     }
@@ -460,8 +494,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   // Показывает цветные точки для дней с парами
-  Widget _buildEventMarkers(DateTime date, ScheduleProvider scheduleProvider,
-      NotesProvider notesProvider) {
+  Widget _buildEventMarkers(
+    DateTime date,
+    ScheduleProvider scheduleProvider,
+    NotesProvider notesProvider,
+  ) {
     final allEvents = _getEventsForDay(date); // Все события без фильтра
     final hasSchedule = allEvents.isNotEmpty;
     final hasNote = notesProvider.hasNoteForDate(date);
@@ -508,7 +545,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
     // Проверяем типы пар в расписании
     bool hasPractice = false;
-    bool hasLecture = false;
     bool hasSpecial = false; // для особых преподавателей или предметов
 
     for (var lesson in schedule) {
@@ -516,8 +552,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
         hasPractice = true;
       } else if (lesson.teacher.toLowerCase().contains('соловей')) {
         hasSpecial = true;
-      } else {
-        hasLecture = true;
       }
     }
 
@@ -528,29 +562,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
       return Colors.blue;
     } else {
       return Colors.green;
-    }
-  }
-
-  String _getCalendarFormatButtonText(CalendarFormat format) {
-    switch (format) {
-      case CalendarFormat.month:
-        return 'Месяц';
-      case CalendarFormat.twoWeeks:
-        return '2 недели';
-      case CalendarFormat.week:
-        return 'Неделя';
-      default:
-        return 'Месяц';
-    }
-  }
-
-  String _formatDate(String dateStr) {
-    try {
-      final date = DateService.parseScheduleDate(dateStr);
-      return DateService.formatDateForDisplay(date);
-    } catch (e) {
-      debugPrint('Ошибка форматирования даты $dateStr: $e');
-      return dateStr; // Возвращаем исходную строку при ошибке
     }
   }
 
@@ -569,12 +580,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
             TextButton(
               onPressed: _showFilterDialog,
               style: TextButton.styleFrom(
-                backgroundColor: Theme.of(context)
-                    .colorScheme
-                    .primaryContainer
-                    .withOpacity(0.5),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                backgroundColor: Theme.of(context).colorScheme.primaryContainer
+                    .withValues(alpha: 0.5),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 2,
+                ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
                 ),
@@ -633,14 +644,18 @@ class _CalendarScreenState extends State<CalendarScreen> {
                   formatButtonShowsNext: false,
                   titleCentered: true,
                   formatButtonDecoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey.withOpacity(0.4)),
+                    border: Border.all(
+                      color: Colors.grey.withValues(alpha: 0.4),
+                    ),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   formatButtonTextStyle: TextStyle(
                     color: Theme.of(context).colorScheme.onSurface,
                   ),
-                  formatButtonPadding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  formatButtonPadding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
                   leftChevronIcon: const Icon(Icons.chevron_left),
                   rightChevronIcon: const Icon(Icons.chevron_right),
                 ),
@@ -653,26 +668,20 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     color: Theme.of(context).colorScheme.onSurface,
                   ),
                   outsideTextStyle: TextStyle(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .onSurface
-                        .withOpacity(0.5),
+                    color: Theme.of(context).colorScheme.onSurface
+                        .withValues(alpha: 0.5),
                   ),
                   todayDecoration: BoxDecoration(
-                    color:
-                        Theme.of(context).colorScheme.primary.withOpacity(0.3),
+                    color: Theme.of(context).colorScheme.primary
+                        .withValues(alpha: 0.3),
                     shape: BoxShape.circle,
                   ),
                   selectedDecoration: BoxDecoration(
                     color: Theme.of(context).colorScheme.primary,
                     shape: BoxShape.circle,
                   ),
-                  weekendDecoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                  ),
-                  defaultDecoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                  ),
+                  weekendDecoration: BoxDecoration(shape: BoxShape.circle),
+                  defaultDecoration: BoxDecoration(shape: BoxShape.circle),
                   todayTextStyle: TextStyle(
                     color: Theme.of(context).colorScheme.onPrimary,
                   ),
@@ -680,10 +689,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     color: Theme.of(context).colorScheme.onPrimary,
                   ),
                   disabledTextStyle: TextStyle(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .onSurface
-                        .withOpacity(0.3),
+                    color: Theme.of(context).colorScheme.onSurface
+                        .withValues(alpha: 0.3),
                   ),
                 ),
                 onDaySelected: (selectedDay, focusedDay) {
@@ -695,7 +702,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 calendarBuilders: CalendarBuilders(
                   markerBuilder: (context, date, events) {
                     return _buildEventMarkers(
-                        date, scheduleProvider, notesProvider);
+                      date,
+                      scheduleProvider,
+                      notesProvider,
+                    );
                   },
                   // Добавляем builder для отображения дополнительной информации
                   dowBuilder: (context, day) {
@@ -708,7 +718,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                         child: Text(
                           text,
                           style: TextStyle(
-                              color: Theme.of(context).colorScheme.error),
+                            color: Theme.of(context).colorScheme.error,
+                          ),
                         ),
                       );
                     }
@@ -716,12 +727,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
                   },
                   // Заменяем cellBuilder на defaultBuilder, todayBuilder и selectedBuilder
                   defaultBuilder: (context, day, focusedDay) {
-                    // Получаем события для дня
-                    final events = _getEventsForDay(day);
-                    final hasSchedule = events.isNotEmpty;
-                    final hasNote = notesProvider.hasNoteForDate(day);
+                    // Метки о наличии пар и заметок рисует markerBuilder,
+                    // здесь достаточно самого числа.
                     final isSunday = day.weekday == DateTime.sunday;
-                    final isFuture = day.isAfter(DateTime.now());
 
                     return Container(
                       margin: const EdgeInsets.all(2),
@@ -745,11 +753,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     );
                   },
                   selectedBuilder: (context, day, focusedDay) {
-                    // Получаем события для дня
-                    final events = _getEventsForDay(day);
-                    final hasSchedule = events.isNotEmpty;
-                    final hasNote = notesProvider.hasNoteForDate(day);
-
                     return Container(
                       margin: const EdgeInsets.all(2),
                       decoration: BoxDecoration(
@@ -773,18 +776,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     );
                   },
                   todayBuilder: (context, day, focusedDay) {
-                    // Получаем события для дня
-                    final events = _getEventsForDay(day);
-                    final hasSchedule = events.isNotEmpty;
-                    final hasNote = notesProvider.hasNoteForDate(day);
-
                     return Container(
                       margin: const EdgeInsets.all(2),
                       decoration: BoxDecoration(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .primary
-                            .withOpacity(0.3),
+                        color: Theme.of(context).colorScheme.primary
+                            .withValues(alpha: 0.3),
                         shape: BoxShape.circle,
                       ),
                       child: Stack(
@@ -810,10 +806,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                         child: Text(
                           '${day.day}',
                           style: TextStyle(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurface
-                                .withOpacity(0.3),
+                            color: Theme.of(context).colorScheme.onSurface
+                                .withValues(alpha: 0.3),
                           ),
                         ),
                       ),
@@ -831,21 +825,27 @@ class _CalendarScreenState extends State<CalendarScreen> {
           ),
           Container(
             margin: const EdgeInsets.symmetric(horizontal: 16),
-            child: const Divider(
-              thickness: 1.5,
-            ),
+            child: const Divider(thickness: 1.5),
           ),
           if (_selectedDay != null)
             Expanded(
               child: Consumer2<ScheduleProvider, NotesProvider>(
                 builder: (context, provider, notesProvider, child) {
                   final allEvents = _getEventsForDay(
-                      _selectedDay!); // Все события без фильтра
+                    _selectedDay!,
+                  ); // Все события без фильтра
                   final schedule = _getScheduleForDay(_selectedDay!);
                   final note = notesProvider.getNote(_selectedDay!);
 
-                  if (_noteController.text != note?.text) {
-                    _noteController.text = note?.text ?? '';
+                  // Подставляем текст только при смене выбранного дня,
+                  // иначе поле перетирается во время ввода.
+                  if (_loadedNoteDay == null ||
+                      !DateService.isSameDay(_loadedNoteDay!, _selectedDay!)) {
+                    _loadedNoteDay = _selectedDay;
+                    final text = note?.text ?? '';
+                    if (_noteController.text != text) {
+                      _noteController.text = text;
+                    }
                   }
 
                   return SingleChildScrollView(
@@ -862,24 +862,23 @@ class _CalendarScreenState extends State<CalendarScreen> {
                                 Icon(
                                   Icons.event_busy,
                                   size: 64,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .primary
-                                      .withOpacity(0.5),
+                                  color: Theme.of(context).colorScheme.primary
+                                      .withValues(alpha: 0.5),
                                 ),
                                 const SizedBox(height: 16),
                                 Text(
-                                  _getDetailedStatusText(_selectedDay!,
-                                      provider, allEvents.isNotEmpty),
+                                  _getDetailedStatusText(
+                                    _selectedDay!,
+                                    provider,
+                                    allEvents.isNotEmpty,
+                                  ),
                                   textAlign: TextAlign.center,
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .titleMedium
+                                  style: Theme.of(context).textTheme.titleMedium
                                       ?.copyWith(
                                         color: Theme.of(context)
                                             .colorScheme
                                             .onSurface
-                                            .withOpacity(0.7),
+                                            .withValues(alpha: 0.7),
                                       ),
                                 ),
                               ],
@@ -888,27 +887,31 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           const SizedBox(height: 24),
                         ] else if (schedule.isNotEmpty) ...[
                           Text(
-                            'Расписание на ${_formatDate(DateFormat('d-MMM', 'ru_RU').format(_selectedDay!))}',
+                            'Расписание на ${DateService.formatDateForDisplay(_selectedDay!)}',
                             style: Theme.of(context).textTheme.titleLarge,
                           ),
                           const SizedBox(height: 8),
-                          ...schedule.map((item) => Padding(
-                                padding: const EdgeInsets.only(bottom: 8),
-                                child: ScheduleItemCard(
-                                  item: item,
-                                  index: schedule.indexOf(item),
-                                  date: _selectedDay!,
-                                ),
-                              )),
+                          ...schedule.map(
+                            (item) => Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: ScheduleItemCard(
+                                item: item,
+                                index: schedule.indexOf(item),
+                                date: _selectedDay!,
+                              ),
+                            ),
+                          ),
                           const SizedBox(height: 16),
                         ],
                         Row(
                           children: [
-                            Icon(Icons.note_alt_outlined,
-                                color: Theme.of(context).colorScheme.primary),
+                            Icon(
+                              Icons.note_alt_outlined,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
                             const SizedBox(width: 8),
                             Text(
-                              'Заметка на ${_formatDate(DateFormat('d-MMM', 'ru_RU').format(_selectedDay!))}',
+                              'Заметка на ${DateService.formatDateForDisplay(_selectedDay!)}',
                               style: Theme.of(context).textTheme.titleMedium,
                             ),
                           ],
@@ -926,20 +929,26 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           ),
                           maxLines: 5,
                           onChanged: (value) {
-                            if (value.trim().isEmpty) {
-                              notesProvider.deleteNote(_selectedDay!);
-                            } else {
-                              notesProvider.saveNote(
-                                Note(
-                                  date: _selectedDay!,
-                                  text: value,
-                                ),
-                              );
-                            }
+                            // День фиксируем здесь: если пользователь
+                            // переключит дату до срабатывания таймера,
+                            // текст всё равно попадёт в нужный день.
+                            final day = _selectedDay!;
+                            _noteSaveDebounce?.cancel();
+                            _noteSaveDebounce = Timer(
+                              _noteSaveDelay,
+                              () => _persistNote(notesProvider, day, value),
+                            );
                           },
                           onTapOutside: (event) {
-                            FocusScope.of(context)
-                                .unfocus(); // Сбрасываем фокус при нажатии вне поля
+                            // Записываем сразу, чтобы правка не потерялась,
+                            // если пользователь тут же уйдёт с экрана.
+                            _noteSaveDebounce?.cancel();
+                            _persistNote(
+                              notesProvider,
+                              _selectedDay!,
+                              _noteController.text,
+                            );
+                            FocusScope.of(context).unfocus();
                           },
                         ),
                       ],
@@ -966,16 +975,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
     }
   }
 
-  // Преобразует строку с датой в DateTime
-  DateTime _parseDate(String dateStr) {
-    try {
-      return DateService.parseScheduleDate(dateStr);
-    } catch (e) {
-      debugPrint('Ошибка парсинга даты $dateStr: $e');
-      return DateTime.now(); // Возвращаем текущую дату при ошибке
-    }
-  }
-
   void _saveCalendarFormat(CalendarFormat format) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('calendar_format', format.toString());
@@ -983,7 +982,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   // Получает детальный статус для отображения в расписании
   String _getDetailedStatusText(
-      DateTime day, ScheduleProvider provider, bool hasAnySchedule) {
+    DateTime day,
+    ScheduleProvider provider,
+    bool hasAnySchedule,
+  ) {
     final now = DateTime.now();
     final isFuture = day.isAfter(now);
     final isOneDayAhead = day.difference(now).inDays <= 1 && day.isAfter(now);
@@ -992,66 +994,24 @@ class _CalendarScreenState extends State<CalendarScreen> {
     // Если есть какое-то расписание на этот день, но нет для текущего фильтра
     if (hasAnySchedule) {
       if (_selectedFilter == 'group' && _selectedGroup != null) {
-        return 'Нет расписания для группы $_selectedGroup на ${_formatDate(DateFormat('d-MMM', 'ru_RU').format(day))}';
+        return 'Нет расписания для группы $_selectedGroup на ${DateService.formatDateForDisplay(day)}';
       } else if (_selectedFilter == 'teacher' && _selectedTeacher != null) {
-        return 'Нет расписания для преподавателя $_selectedTeacher на ${_formatDate(DateFormat('d-MMM', 'ru_RU').format(day))}';
+        return 'Нет расписания для преподавателя $_selectedTeacher на ${DateService.formatDateForDisplay(day)}';
       }
     }
 
     // Проверяем состояние дня
     if (isFuture) {
       if (isOneDayAhead) {
-        return 'Расписание на ${_formatDate(DateFormat('d-MMM', 'ru_RU').format(day))} ещё не загружено\nОбновите данные позже';
+        return 'Расписание на ${DateService.formatDateForDisplay(day)} ещё не загружено\nОбновите данные позже';
       } else {
-        return 'Расписание на ${_formatDate(DateFormat('d-MMM', 'ru_RU').format(day))} будет доступно позже';
+        return 'Расписание на ${DateService.formatDateForDisplay(day)} будет доступно позже';
       }
     } else if (isSunday) {
       return 'Выходной день - воскресенье';
     } else {
-      return 'На ${_formatDate(DateFormat('d-MMM', 'ru_RU').format(day))} нет данных о расписании';
+      return 'На ${DateService.formatDateForDisplay(day)} нет данных о расписании';
     }
-  }
-
-  // Получает текст статуса для дня без расписания (для отображения в маркерах календаря)
-  String _getStatusText(DateTime day, ScheduleProvider provider) {
-    final now = DateTime.now();
-    final isFuture = day.isAfter(now);
-    final isOneDayAhead = day.difference(now).inDays <= 1 && day.isAfter(now);
-    final isSunday = day.weekday == DateTime.sunday;
-
-    // Общее расписание без фильтра
-    final allSchedule = provider.getScheduleForCalendar();
-
-    if (allSchedule == null || allSchedule.isEmpty) {
-      return isFuture ? "Ожидается" : "Нет данных";
-    }
-
-    // Проверяем, есть ли расписание для этого дня без учета фильтра
-    final dateStr = DateService.formatDateForStorage(day);
-    final hasScheduleForDay = allSchedule.containsKey(dateStr);
-
-    if (!hasScheduleForDay) {
-      if (isFuture && isOneDayAhead) {
-        return "Ожидается";
-      } else if (isSunday) {
-        return "Выходной";
-      } else if (isFuture) {
-        return "";
-      } else {
-        return "Нет данных";
-      }
-    }
-
-    // Если есть расписание для дня, но после фильтрации ничего не осталось
-    if (_selectedFilter != 'all') {
-      if (_selectedFilter == 'group' && _selectedGroup != null) {
-        return "Нет для группы";
-      } else if (_selectedFilter == 'teacher' && _selectedTeacher != null) {
-        return "Нет для преп.";
-      }
-    }
-
-    return "";
   }
 
   // Обновляет текущую сущность для отображения в AppBar
@@ -1061,17 +1021,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
     try {
       if (_selectedFilter == 'group' && _selectedGroup != null) {
         _scheduleProvider!.setCurrentEntity(
-          SearchEntity(
-            name: _selectedGroup!,
-            type: EntityType.group,
-          ),
+          SearchEntity(name: _selectedGroup!, type: EntityType.group),
         );
       } else if (_selectedFilter == 'teacher' && _selectedTeacher != null) {
         _scheduleProvider!.setCurrentEntity(
-          SearchEntity(
-            name: _selectedTeacher!,
-            type: EntityType.teacher,
-          ),
+          SearchEntity(name: _selectedTeacher!, type: EntityType.teacher),
         );
       } else {
         _scheduleProvider!.clearCurrentEntity();
@@ -1081,8 +1035,19 @@ class _CalendarScreenState extends State<CalendarScreen> {
     }
   }
 
+  /// Записывает или удаляет заметку указанного дня.
+  void _persistNote(NotesProvider notesProvider, DateTime day, String value) {
+    if (value.trim().isEmpty) {
+      notesProvider.deleteNote(day);
+    } else {
+      notesProvider.saveNote(Note(date: day, text: value));
+    }
+  }
+
   @override
   void dispose() {
+    _noteSaveDebounce?.cancel();
+
     // Удаляем слушатель изменений провайдера безопасно
     if (_scheduleProvider != null) {
       try {

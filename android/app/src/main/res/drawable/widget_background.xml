@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Белая заготовка фона. Цвет и прозрачность накладываются в рантайме
+    через setColorFilter/setImageAlpha на ImageView, поэтому здесь важна
+    только форма: скругление углов не теряется при перекраске.
+-->
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
-    <solid android:color="#CC1E1E1E" /> <!-- Semi-transparent dark background -->
+    <solid android:color="#FFFFFFFF" />
     <corners android:radius="16dp" />
 </shape>

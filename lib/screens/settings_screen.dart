@@ -3,11 +3,13 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
+
 import '../services/database_service.dart';
+import '../providers/personalization_provider.dart';
 import '../providers/schedule_provider.dart';
-import 'dart:io';
-import 'package:sqflite/sqflite.dart';
+
 import 'package:intl/intl.dart' as intl;
+
 import '../widgets/developer_ads_widget.dart';
 import '../main.dart'; // Для доступа к myAppKey
 import 'personalization_screen.dart';
@@ -26,7 +28,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _appVersion = '';
   int _storageDays = 30;
   String _lastUpdateInfo = 'Загрузка...';
-  Map<String, String> _cacheInfo = {};
   int _cookieCount = 0;
 
   @override
@@ -35,7 +36,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _loadSettings();
     _loadAppVersion();
     _loadLastUpdateInfo();
-    _calculateCacheSize();
     _loadCookieCount();
   }
 
@@ -99,74 +99,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  // Считаем сколько места занимает приложение
-  Future<void> _calculateCacheSize() async {
-    try {
-      final dbDir = await getDatabasesPath();
-      final Map<String, String> cacheInfo = {};
-
-      // Размер базы данных
-      final dbFile = File('$dbDir/schedule.db');
-      if (await dbFile.exists()) {
-        final dbSize = await dbFile.length();
-        cacheInfo['База данных'] = _formatSize(dbSize);
-      } else {
-        cacheInfo['База данных'] = '0 КБ';
-      }
-
-      // Размер SharedPreferences
-      final prefs = await SharedPreferences.getInstance();
-      final prefsSize = await prefs.getKeys().length * 100; // Примерная оценка
-      cacheInfo['Настройки'] = _formatSize(prefsSize);
-
-      // Общий размер
-      final totalSize = await _calculateTotalCacheSize();
-      cacheInfo['Общий размер'] = _formatSize(totalSize);
-
-      if (mounted) {
-        setState(() {
-          _cacheInfo = cacheInfo;
-        });
-      }
-    } catch (e) {
-      print('Ошибка при расчете размера кэша: $e');
-    }
-  }
-
-  // Считаем общий размер всех данных
-  Future<int> _calculateTotalCacheSize() async {
-    int totalSize = 0;
-
-    try {
-      final dbDir = await getDatabasesPath();
-
-      // Размер базы данных
-      final dbFile = File('$dbDir/schedule.db');
-      if (await dbFile.exists()) {
-        totalSize += await dbFile.length();
-      }
-
-      // Примерный размер SharedPreferences
-      final prefs = await SharedPreferences.getInstance();
-      totalSize += prefs.getKeys().length * 100; // Примерная оценка
-    } catch (e) {
-      print('Ошибка при расчете общего размера кэша: $e');
-    }
-
-    return totalSize;
-  }
-
-  // Переводит байты в нормальный размер (КБ, МБ)
-  String _formatSize(int bytes) {
-    if (bytes < 1024) {
-      return '$bytes Б';
-    } else if (bytes < 1024 * 1024) {
-      return '${(bytes / 1024).toStringAsFixed(1)} КБ';
-    } else {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} МБ';
-    }
-  }
-
   // Загружаем количество печенек
   Future<void> _loadCookieCount() async {
     final prefs = await SharedPreferences.getInstance();
@@ -180,9 +112,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Настройки'),
-      ),
+      appBar: AppBar(title: const Text('Настройки')),
       body: ListView(
         children: [
           // Секция персонализации (объединенная)
@@ -355,6 +285,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // Переключает темную тему
   Future<void> toggleTheme() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+
     final newValue = !(_isDarkMode ?? false);
     setState(() {
       _isDarkMode = newValue;
@@ -371,7 +303,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   // Обновляет количество дней хранения расписания
   Future<void> _updateStorageDays(int days) async {
+    final provider = context.read<ScheduleProvider>();
     final prefs = await SharedPreferences.getInstance();
+
+    if (!mounted) return;
     setState(() {
       _storageDays = days;
     });
@@ -379,11 +314,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await prefs.setInt('schedule_storage_days', days);
 
     // Обновляем настройки в провайдере и очищаем старые данные
-    final provider = context.read<ScheduleProvider>();
     await provider.updateStorageDays(days);
-
-    // Пересчитываем размер кэша
-    await _calculateCacheSize();
 
     // Показываем уведомление об успешном обновлении
     if (mounted) {
@@ -397,29 +328,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // Открывает ссылки (сайт колледжа и телеграм)
+  /// Открывает ссылку, перебирая варианты.
+  ///
+  /// Раньше ссылка вида "tg://..." шла единственным вариантом: если Telegram
+  /// не установлен, launchUrl бросал исключение, оно молча проглатывалось,
+  /// и нажатие не давало вообще никакой реакции. Теперь для Telegram есть
+  /// веб-запасной вариант, а при полной неудаче показывается уведомление.
   Future<void> _launchUrl(String urlString) async {
-    final Uri url = Uri.parse(urlString);
+    final candidates = <Uri>[];
 
     if (urlString.startsWith('https://t.me/')) {
+      final domain = urlString.split('/').last;
+      if (domain.isNotEmpty) {
+        candidates.add(Uri.parse('tg://resolve?domain=$domain'));
+      }
+      candidates.add(Uri.parse(urlString));
+    } else if (urlString.startsWith('tg://')) {
+      candidates.add(Uri.parse(urlString));
+      final domain = Uri.tryParse(urlString)?.queryParameters['domain'];
+      if (domain != null && domain.isNotEmpty) {
+        candidates.add(Uri.parse('https://t.me/$domain'));
+      }
+    } else {
+      candidates.add(Uri.parse(urlString));
+    }
+
+    for (final uri in candidates) {
       try {
-        final telegramUrl =
-            Uri.parse('tg://resolve?domain=${urlString.split('/').last}');
-        if (await canLaunchUrl(telegramUrl)) {
-          await launchUrl(telegramUrl);
+        if (await launchUrl(uri, mode: LaunchMode.externalApplication)) {
           return;
         }
       } catch (e) {
-        debugPrint('Ошибка открытия Telegram: $e');
+        debugPrint('Не удалось открыть $uri: $e');
       }
     }
 
-    try {
-      await launchUrl(
-        url,
-        mode: LaunchMode.externalApplication,
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не удалось открыть ссылку')),
       );
-    } catch (e) {
-      debugPrint('Ошибка открытия ссылки: $e');
     }
   }
 
@@ -441,8 +388,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             InkWell(
               onTap: () => _launchUrl('tg://resolve?domain=Daniilgargun'),
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                padding: const EdgeInsets.symmetric(
+                  vertical: 8,
+                  horizontal: 12,
+                ),
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.primaryContainer,
                   borderRadius: BorderRadius.circular(8),
@@ -504,7 +453,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (context) => AlertDialog(
         title: const Text('Сбросить настройки?'),
         content: const Text(
-            'Все настройки будут возвращены к значениям по умолчанию. Данные расписания не будут удалены.'),
+          'Все настройки будут возвращены к значениям по умолчанию. Данные расписания не будут удалены.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -512,9 +462,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            style: FilledButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
             child: const Text('Сбросить'),
           ),
         ],
@@ -522,6 +470,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     if (result == true) {
+      if (!mounted) return;
+      final provider = context.read<ScheduleProvider>();
+      final personalization = context.read<PersonalizationProvider>();
       final prefs = await SharedPreferences.getInstance();
 
       // Сохраняем только данные о последнем обновлении
@@ -540,16 +491,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await prefs.setInt('schedule_storage_days', 30);
 
       // Обновляем настройки в провайдере
-      final provider = context.read<ScheduleProvider>();
       await provider.updateStorageDays(30);
+
+      // prefs.clear() стирает и настройки персонализации, но провайдер
+      // держит их в памяти: без явного сброса цвет и формат оставались
+      // прежними до перезапуска приложения, а на диске уже были удалены.
+      await personalization.resetSettings();
+
+      // Тема приложения живёт в MyAppState, а не в prefs: без этого вызова
+      // тумблер в настройках показывал светлую тему, а приложение
+      // оставалось тёмным до перезапуска.
+      myAppKey.currentState?.updateTheme(false);
 
       // Перезагружаем настройки
       await _loadSettings();
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Настройки сброшены')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Настройки сброшены')));
       }
     }
   }
@@ -561,7 +520,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (context) => AlertDialog(
         title: const Text('Очистить расписание?'),
         content: const Text(
-            'Все сохраненные данные расписания будут удалены. Вам потребуется подключение к интернету для загрузки нового расписания.'),
+          'Все сохраненные данные расписания будут удалены. Вам потребуется подключение к интернету для загрузки нового расписания.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -569,9 +529,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            style: FilledButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
             child: const Text('Очистить'),
           ),
         ],
@@ -579,13 +537,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     if (result == true) {
-      // Очищаем базу данных
-      final db = context.read<DatabaseService>();
-      await db.recreateDatabase();
-
-      // Сбрасываем данные в провайдере
+      if (!mounted) return;
       final provider = context.read<ScheduleProvider>();
-      provider.clearCache();
+
+      // DatabaseService — обычный синглтон, а не Provider.
+      // Раньше здесь был context.read<DatabaseService>(), который падал с
+      // ProviderNotFoundException, потому что в MultiProvider он не заведён.
+      await DatabaseService().recreateDatabase();
+
+      // Полностью сбрасываем состояние и перечитываем данные,
+      // иначе на экране оставалось расписание, уже удалённое из базы.
+      await provider.reloadAfterDataCleared();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -641,26 +603,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             tooltip: 'Изменить период отображения',
             onSelected: _updateStorageDays,
             itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 7,
-                child: Text('7 дней'),
-              ),
-              const PopupMenuItem(
-                value: 14,
-                child: Text('14 дней'),
-              ),
+              const PopupMenuItem(value: 7, child: Text('7 дней')),
+              const PopupMenuItem(value: 14, child: Text('14 дней')),
               const PopupMenuItem(
                 value: 30,
                 child: Text('30 дней (рекомендуется)'),
               ),
-              const PopupMenuItem(
-                value: 60,
-                child: Text('60 дней'),
-              ),
-              const PopupMenuItem(
-                value: 90,
-                child: Text('90 дней'),
-              ),
+              const PopupMenuItem(value: 60, child: Text('60 дней')),
+              const PopupMenuItem(value: 90, child: Text('90 дней')),
             ],
           ),
         ),

@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+
 import '../services/parser_service.dart';
 import '../services/database_service.dart';
 import '../services/date_service.dart';
@@ -6,23 +7,32 @@ import '../services/cache_service.dart';
 import '../services/schedule_diff_service.dart';
 import '../models/schedule_model.dart';
 import '../models/schedule_change.dart';
+
 import 'dart:developer' as developer;
+
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart' as intl;
+
 import '../services/connectivity_service.dart';
+
 import 'dart:async';
 
 import 'dart:convert';
+
 import '../services/home_widget_service.dart';
 
 class ScheduleProvider extends ChangeNotifier {
+  /// Ключ, под которым хранится хэш последней успешно разобранной страницы.
+  /// Позволяет пропускать разбор, когда на сайте ничего не изменилось.
+  static const String _pageHashKey = 'last_page_hash';
+
   final ParserService _parser = ParserService();
   final DatabaseService _db = DatabaseService();
 
   Map<String, Map<String, List<ScheduleItem>>>? _currentScheduleData;
   Map<String, Map<String, List<ScheduleItem>>>? _fullScheduleData;
   Map<String, Map<String, List<ScheduleItem>>>?
-      _previousScheduleData; // Для сравнения
+  _previousScheduleData; // Для сравнения
   List<String> _groups = [];
   List<String> _teachers = [];
   String? _error;
@@ -39,7 +49,7 @@ class ScheduleProvider extends ChangeNotifier {
   bool _isUpdating = false;
   bool _isOffline = false;
 
-  Timer? _connectivityCheckTimer;
+  StreamSubscription<bool>? _connectivitySubscription;
 
   // Используем централизованный сервис кэширования
   final CacheService _cacheService = CacheService();
@@ -69,6 +79,27 @@ class ScheduleProvider extends ChangeNotifier {
 
   Map<String, Map<String, List<ScheduleItem>>>? get scheduleData =>
       _currentScheduleData;
+
+  // Кэш хронологически отсортированных дат текущего расписания.
+  // Порядок ключей Map зависит от порядка строк в SQLite и не является
+  // хронологическим, поэтому опираться на него в UI нельзя.
+  List<String>? _orderedDatesCache;
+  Map<String, Map<String, List<ScheduleItem>>>? _orderedDatesSource;
+
+  /// Даты текущего расписания в хронологическом порядке.
+  List<String> get orderedDates {
+    final data = _currentScheduleData;
+    if (data == null || data.isEmpty) return const <String>[];
+
+    if (!identical(_orderedDatesSource, data) ||
+        _orderedDatesCache == null ||
+        _orderedDatesCache!.length != data.length) {
+      _orderedDatesSource = data;
+      _orderedDatesCache = DateService.sortDateKeys(data.keys);
+    }
+    return _orderedDatesCache!;
+  }
+
   Map<String, Map<String, List<ScheduleItem>>>? get fullScheduleData =>
       _fullScheduleData;
   List<String> get groups => _groups;
@@ -86,16 +117,37 @@ class ScheduleProvider extends ChangeNotifier {
   bool get isOffline => _isOffline;
 
   ScheduleProvider() {
-    _connectivityCheckTimer = Timer.periodic(
-      const Duration(seconds: 5),
-      (_) => _checkConnectivity(),
+    // Раньше здесь стоял Timer.periodic(5 сек), который на каждом тике дёргал
+    // платформенный вызов проверки сети и мог вызывать notifyListeners().
+    // Это разряжало батарею и приводило к лишним перестроениям всего дерева.
+    // Теперь слушаем поток изменений подключения — событие приходит только
+    // при реальной смене состояния сети.
+    _connectivitySubscription = ConnectivityService().onStatusChanged.listen(
+      _onConnectivityChanged,
     );
+
+    // Стартовое состояние сети
+    _checkConnectivity();
 
     // Инициализируем настройки отображения
     _initDisplayDays();
 
     // Загружаем настройки подсказок поиска
     _loadSearchSuggestionSettings();
+  }
+
+  void _onConnectivityChanged(bool isOnline) {
+    if (_isOffline == !isOnline) return;
+
+    _isOffline = !isOnline;
+    notifyListeners();
+
+    // Сохраняем прежнее поведение: при возвращении связи расписание
+    // подтягивается сразу, а не ждёт окна фоновой синхронизации.
+    // Параллельный запуск отсекается флагом _isUpdating внутри updateSchedule.
+    if (isOnline) {
+      updateSchedule(silent: true);
+    }
   }
 
   // Инициализирует настройки отображения
@@ -209,8 +261,11 @@ class ScheduleProvider extends ChangeNotifier {
         updateHomeWidget();
       }
     } catch (e, stackTrace) {
-      developer.log('Ошибка при загрузке расписания:',
-          error: e, stackTrace: stackTrace);
+      developer.log(
+        'Ошибка при загрузке расписания:',
+        error: e,
+        stackTrace: stackTrace,
+      );
       _handleError(
         'Не удалось загрузить расписание',
         details: 'Проверьте подключение к интернету и попробуйте снова',
@@ -256,25 +311,50 @@ class ScheduleProvider extends ChangeNotifier {
             )
           : null;
 
-      final result = await compute(_parseScheduleIsolate, _parser.url);
+      final prefs = await SharedPreferences.getInstance();
+      final previousHash = prefs.getString(_pageHashKey);
 
-      if (result.$4 != null) {
-        _handleError('Ошибка обновления', details: result.$4);
+      final result = await _parser.parseSchedule(previousHash: previousHash);
+
+      if (result.error != null) {
+        _handleError('Ошибка обновления', details: result.error);
         return null;
-      } else if (result.$1 != null && result.$1!.isNotEmpty) {
-        _currentScheduleData = result.$1;
+      }
+
+      // Страница на сайте не изменилась: разбор не выполнялся, писать в базу
+      // нечего. Отмечаем факт успешной проверки и выходим.
+      if (result.notModified) {
+        await prefs.setString(
+          'last_schedule_update',
+          DateTime.now().toIso8601String(),
+        );
+        _isLoaded = true;
+        _error = null;
+        if (!silent) {
+          _showSuccess = true;
+          _successMessage = 'Расписание актуально';
+        }
+        return null;
+      }
+
+      if (result.schedule.isNotEmpty) {
+        _currentScheduleData = result.schedule;
         await _db.saveCurrentSchedule(_currentScheduleData!);
         await _db.archiveSchedule(_currentScheduleData!);
         _fullScheduleData = await _db.getArchiveSchedule();
 
-        _groups = result.$2;
-        _teachers = result.$3;
+        _groups = result.groups;
+        _teachers = result.teachers;
 
         await _db.saveGroupsAndTeachers(_groups, _teachers);
 
-        final prefs = await SharedPreferences.getInstance();
         await prefs.setString(
-            'last_schedule_update', DateTime.now().toIso8601String());
+          'last_schedule_update',
+          DateTime.now().toIso8601String(),
+        );
+        if (result.contentHash != null) {
+          await prefs.setString(_pageHashKey, result.contentHash!);
+        }
 
         await _cleanOldSchedule();
 
@@ -415,16 +495,22 @@ class ScheduleProvider extends ChangeNotifier {
       _groups = groupsResult.map((e) => e['name'] as String).toList();
       _teachers = teachersResult.map((e) => e['name'] as String).toList();
 
-      developer.log('Загружено из базы:', error: {
-        'Количество групп': _groups.length,
-        'Группы': _groups,
-        'Количество преподавателей': _teachers.length,
-      });
+      developer.log(
+        'Загружено из базы:',
+        error: {
+          'Количество групп': _groups.length,
+          'Группы': _groups,
+          'Количество преподавателей': _teachers.length,
+        },
+      );
 
       notifyListeners();
     } catch (e, stackTrace) {
-      developer.log('Ошибка загрузки групп и преподавателей:',
-          error: e, stackTrace: stackTrace);
+      developer.log(
+        'Ошибка загрузки групп и преподавателей:',
+        error: e,
+        stackTrace: stackTrace,
+      );
     }
   }
 
@@ -452,20 +538,9 @@ class ScheduleProvider extends ChangeNotifier {
   @override
   void dispose() {
     _mounted = false;
-    _connectivityCheckTimer?.cancel();
+    _connectivitySubscription?.cancel();
+    _connectivitySubscription = null;
     super.dispose();
-  }
-
-  static Future<
-      (
-        Map<String, Map<String, List<ScheduleItem>>>?,
-        List<String>,
-        List<String>,
-        String?
-      )> _parseScheduleIsolate(String url) async {
-    final parser = ParserService();
-    final result = await parser.parseSchedule();
-    return result;
   }
 
   Future<bool> shouldUpdateSchedule() async {
@@ -487,16 +562,15 @@ class ScheduleProvider extends ChangeNotifier {
   }
 
   Future<void> _checkConnectivity() async {
-    final connectivityService = ConnectivityService();
-    final isOnline = await connectivityService.isOnline();
+    // Синхронизацию при восстановлении связи выполняет ConnectivityService,
+    // здесь только отражаем состояние в UI, чтобы не запускать два
+    // конкурирующих обновления расписания одновременно.
+    final isOnline = await ConnectivityService().isOnline();
+    if (!_mounted) return;
 
-    if (isOnline != !_isOffline) {
+    if (_isOffline != !isOnline) {
       _isOffline = !isOnline;
       notifyListeners();
-
-      if (!_isOffline) {
-        await updateSchedule(silent: true);
-      }
     }
   }
 
@@ -530,11 +604,13 @@ class ScheduleProvider extends ChangeNotifier {
 
     final lowercaseQuery = query.toLowerCase();
     final filtered = lessons
-        .where((lesson) =>
-            lesson.group.toLowerCase().contains(lowercaseQuery) ||
-            lesson.teacher.toLowerCase().contains(lowercaseQuery) ||
-            lesson.classroom.toLowerCase().contains(lowercaseQuery) ||
-            lesson.subject.toLowerCase().contains(lowercaseQuery))
+        .where(
+          (lesson) =>
+              lesson.group.toLowerCase().contains(lowercaseQuery) ||
+              lesson.teacher.toLowerCase().contains(lowercaseQuery) ||
+              lesson.classroom.toLowerCase().contains(lowercaseQuery) ||
+              lesson.subject.toLowerCase().contains(lowercaseQuery),
+        )
         .toList();
 
     _cacheService.setFilteredData(cacheKey, filtered);
@@ -543,8 +619,37 @@ class ScheduleProvider extends ChangeNotifier {
 
   void clearCache() {
     _cacheService.clearAll();
+    _orderedDatesCache = null;
+    _orderedDatesSource = null;
     // Необходимо принудительно уведомить слушателей при очистке кэша
     notifyListeners();
+  }
+
+  /// Полный сброс состояния после очистки базы данных с последующей
+  /// перезагрузкой. Без него экран продолжал показывать расписание,
+  /// которого в базе уже нет.
+  Future<void> reloadAfterDataCleared() async {
+    _currentScheduleData = null;
+    _fullScheduleData = null;
+    _previousScheduleData = null;
+    _groups = [];
+    _teachers = [];
+    _isLoaded = false;
+    _error = null;
+    _errorMessage = null;
+    _showError = false;
+    _orderedDatesCache = null;
+    _orderedDatesSource = null;
+    _cacheService.clearAll();
+
+    // Сбрасываем хэш страницы, иначе следующая загрузка решит,
+    // что расписание не изменилось, и не заполнит пустую базу.
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_pageHashKey);
+
+    notifyListeners();
+
+    await loadSchedule();
   }
 
   // Добавим метод для синхронизации currentScheduleData с fullScheduleData
@@ -553,7 +658,8 @@ class ScheduleProvider extends ChangeNotifier {
       if (_fullScheduleData != null && _fullScheduleData!.isNotEmpty) {
         if (_currentScheduleData == null || _currentScheduleData!.isEmpty) {
           debugPrint(
-              '🔄 Синхронизация данных: восстановление текущего расписания из архива');
+            '🔄 Синхронизация данных: восстановление текущего расписания из архива',
+          );
 
           // Получаем только актуальное расписание из архива
           final actualSchedule = await _db.getActualArchiveSchedule();
@@ -591,7 +697,8 @@ class ScheduleProvider extends ChangeNotifier {
 
   // Сохранение настроек подсказок поиска в SharedPreferences
   Future<void> saveSearchSuggestionSettings(
-      SearchSuggestionSettings settings) async {
+    SearchSuggestionSettings settings,
+  ) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final settingsJson = json.encode(settings.toJson());
@@ -610,7 +717,8 @@ class ScheduleProvider extends ChangeNotifier {
       final updatedGroups = List<String>.from(_searchSettings.favoriteGroups)
         ..add(group);
       await saveSearchSuggestionSettings(
-          _searchSettings.copyWith(favoriteGroups: updatedGroups));
+        _searchSettings.copyWith(favoriteGroups: updatedGroups),
+      );
     }
   }
 
@@ -620,99 +728,116 @@ class ScheduleProvider extends ChangeNotifier {
       final updatedGroups = List<String>.from(_searchSettings.favoriteGroups)
         ..remove(group);
       await saveSearchSuggestionSettings(
-          _searchSettings.copyWith(favoriteGroups: updatedGroups));
+        _searchSettings.copyWith(favoriteGroups: updatedGroups),
+      );
     }
   }
 
   // Добавление элемента в избранные преподаватели
   Future<void> addFavoriteTeacher(String teacher) async {
     if (!_searchSettings.favoriteTeachers.contains(teacher)) {
-      final updatedTeachers =
-          List<String>.from(_searchSettings.favoriteTeachers)..add(teacher);
+      final updatedTeachers = List<String>.from(
+        _searchSettings.favoriteTeachers,
+      )..add(teacher);
       await saveSearchSuggestionSettings(
-          _searchSettings.copyWith(favoriteTeachers: updatedTeachers));
+        _searchSettings.copyWith(favoriteTeachers: updatedTeachers),
+      );
     }
   }
 
   // Удаление элемента из избранных преподавателей
   Future<void> removeFavoriteTeacher(String teacher) async {
     if (_searchSettings.favoriteTeachers.contains(teacher)) {
-      final updatedTeachers =
-          List<String>.from(_searchSettings.favoriteTeachers)..remove(teacher);
+      final updatedTeachers = List<String>.from(
+        _searchSettings.favoriteTeachers,
+      )..remove(teacher);
       await saveSearchSuggestionSettings(
-          _searchSettings.copyWith(favoriteTeachers: updatedTeachers));
+        _searchSettings.copyWith(favoriteTeachers: updatedTeachers),
+      );
     }
   }
 
   // Добавление элемента в избранные кабинеты
   Future<void> addFavoriteClassroom(String classroom) async {
     if (!_searchSettings.favoriteClassrooms.contains(classroom)) {
-      final updatedClassrooms =
-          List<String>.from(_searchSettings.favoriteClassrooms)..add(classroom);
+      final updatedClassrooms = List<String>.from(
+        _searchSettings.favoriteClassrooms,
+      )..add(classroom);
       await saveSearchSuggestionSettings(
-          _searchSettings.copyWith(favoriteClassrooms: updatedClassrooms));
+        _searchSettings.copyWith(favoriteClassrooms: updatedClassrooms),
+      );
     }
   }
 
   // Удаление элемента из избранных кабинетов
   Future<void> removeFavoriteClassroom(String classroom) async {
     if (_searchSettings.favoriteClassrooms.contains(classroom)) {
-      final updatedClassrooms =
-          List<String>.from(_searchSettings.favoriteClassrooms)
-            ..remove(classroom);
+      final updatedClassrooms = List<String>.from(
+        _searchSettings.favoriteClassrooms,
+      )..remove(classroom);
       await saveSearchSuggestionSettings(
-          _searchSettings.copyWith(favoriteClassrooms: updatedClassrooms));
+        _searchSettings.copyWith(favoriteClassrooms: updatedClassrooms),
+      );
     }
   }
 
   // Добавление элемента в избранные предметы
   Future<void> addFavoriteSubject(String subject) async {
     if (!_searchSettings.favoriteSubjects.contains(subject)) {
-      final updatedSubjects =
-          List<String>.from(_searchSettings.favoriteSubjects)..add(subject);
+      final updatedSubjects = List<String>.from(
+        _searchSettings.favoriteSubjects,
+      )..add(subject);
       await saveSearchSuggestionSettings(
-          _searchSettings.copyWith(favoriteSubjects: updatedSubjects));
+        _searchSettings.copyWith(favoriteSubjects: updatedSubjects),
+      );
     }
   }
 
   // Удаление элемента из избранных предметов
   Future<void> removeFavoriteSubject(String subject) async {
     if (_searchSettings.favoriteSubjects.contains(subject)) {
-      final updatedSubjects =
-          List<String>.from(_searchSettings.favoriteSubjects)..remove(subject);
+      final updatedSubjects = List<String>.from(
+        _searchSettings.favoriteSubjects,
+      )..remove(subject);
       await saveSearchSuggestionSettings(
-          _searchSettings.copyWith(favoriteSubjects: updatedSubjects));
+        _searchSettings.copyWith(favoriteSubjects: updatedSubjects),
+      );
     }
   }
 
   // Переключение режима избранного
   Future<void> toggleFavoritesMode(bool useFavorites) async {
     await saveSearchSuggestionSettings(
-        _searchSettings.copyWith(useFavorites: useFavorites));
+      _searchSettings.copyWith(useFavorites: useFavorites),
+    );
   }
 
   // Переключение показа групп
   Future<void> toggleShowGroups(bool show) async {
     await saveSearchSuggestionSettings(
-        _searchSettings.copyWith(showGroups: show));
+      _searchSettings.copyWith(showGroups: show),
+    );
   }
 
   // Переключение показа преподавателей
   Future<void> toggleShowTeachers(bool show) async {
     await saveSearchSuggestionSettings(
-        _searchSettings.copyWith(showTeachers: show));
+      _searchSettings.copyWith(showTeachers: show),
+    );
   }
 
   // Переключение показа кабинетов
   Future<void> toggleShowClassrooms(bool show) async {
     await saveSearchSuggestionSettings(
-        _searchSettings.copyWith(showClassrooms: show));
+      _searchSettings.copyWith(showClassrooms: show),
+    );
   }
 
   // Переключение показа предметов
   Future<void> toggleShowSubjects(bool show) async {
     await saveSearchSuggestionSettings(
-        _searchSettings.copyWith(showSubjects: show));
+      _searchSettings.copyWith(showSubjects: show),
+    );
   }
 
   // Получение избранных подсказок поиска

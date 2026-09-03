@@ -23,13 +23,7 @@ class ScheduleRemoteViewsFactory(private val context: Context) : RemoteViewsServ
     override fun onDataSetChanged() {
         val widgetData = HomeWidgetPlugin.getData(context)
         val jsonString = widgetData.getString("schedule_data", "[]")
-        // Read widget color, default to Blue if not found (though Flutter sends int value)
-        // Flutter Colors.blue.value is usually a large negative int (ARGB).
-        try {
-            widgetColor = widgetData.getInt("widget_color", android.graphics.Color.parseColor("#2196F3"))
-        } catch (e: Exception) {
-            widgetColor = widgetData.getLong("widget_color", android.graphics.Color.parseColor("#2196F3").toLong()).toInt()
-        }
+        widgetColor = WidgetTheme.accentColor(context)
 
         android.util.Log.d("ScheduleWidgetService", "JSON Data: $jsonString")
         scheduleItems = try {
@@ -50,21 +44,21 @@ class ScheduleRemoteViewsFactory(private val context: Context) : RemoteViewsServ
         val views = RemoteViews(context.packageName, R.layout.btk_widget_item)
         
         // Читаем настройки темы
-        val widgetData = HomeWidgetPlugin.getData(context)
-        val isDark = widgetData.getBoolean("widget_theme_dark", true)
-        
-        val primaryTextColor = if (isDark) android.graphics.Color.WHITE else android.graphics.Color.BLACK
-        val secondaryTextColor = if (isDark) android.graphics.Color.parseColor("#CCFFFFFF") else android.graphics.Color.parseColor("#99000000")
+        val isDark = WidgetTheme.isDark(context)
+
+        val primaryTextColor = WidgetTheme.primaryText(isDark)
+        val secondaryTextColor = WidgetTheme.secondaryText(isDark)
         
         try {
             val item = scheduleItems.getJSONObject(position)
             
             val lessonNumber = item.optInt("lessonNumber")
             // Use time from JSON if available, otherwise fallback (though JSON should always have it now)
-            var timeString = item.optString("time")
-            if (timeString.isEmpty()) {
-                timeString = getLessonTime(lessonNumber)
-            }
+            // Время приходит из Dart (LessonTime) — единственного источника
+            // расписания звонков. Раньше здесь была локальная копия таблицы
+            // времён, которая расходилась с Dart (пара 1: 08:30-10:05 против
+            // реальных 8:00-9:40) и подсвечивала не ту пару как текущую.
+            val timeString = item.optString("time")
             
             views.setTextViewText(R.id.lesson_number, lessonNumber.toString())
             views.setTextColor(R.id.lesson_number, primaryTextColor)
@@ -150,18 +144,6 @@ class ScheduleRemoteViewsFactory(private val context: Context) : RemoteViewsServ
         return views
     }
 
-    private fun getLessonTime(number: Int): String {
-        return when (number) {
-            1 -> "08:30 - 10:05"
-            2 -> "10:25 - 12:00"
-            3 -> "12:20 - 13:55"
-            4 -> "14:15 - 15:50"
-            5 -> "16:10 - 17:45"
-            6 -> "18:00 - 19:35"
-            else -> ""
-        }
-    }
-    
     private fun isCurrentLesson(timeString: String): Boolean {
         if (timeString.isEmpty()) return false
         try {

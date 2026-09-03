@@ -1,9 +1,12 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+
 import '../models/schedule_model.dart';
 import '../models/note_model.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import 'date_service.dart';
 
 // Работа с базой данных SQLite
@@ -15,7 +18,7 @@ class DatabaseService {
 
   // Кэш для данных
   static Map<String, Map<String, List<ScheduleItem>>> _scheduleCache = {};
-  static Map<String, List<String>> _listsCache = {};
+  static final Map<String, List<String>> _listsCache = {};
   static bool _isInitialized = false;
 
   Future<Database> get database async {
@@ -38,11 +41,21 @@ class DatabaseService {
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 3) {
           // Добавляем индексы для существующих баз данных
-          await db.execute('CREATE INDEX IF NOT EXISTS idx_current_schedule_date ON current_schedule(date)');
-          await db.execute('CREATE INDEX IF NOT EXISTS idx_current_schedule_group ON current_schedule(group_name)');
-          await db.execute('CREATE INDEX IF NOT EXISTS idx_archive_schedule_date ON archive_schedule(date)');
-          await db.execute('CREATE INDEX IF NOT EXISTS idx_archive_schedule_group ON archive_schedule(group_name)');
-          await db.execute('CREATE INDEX IF NOT EXISTS idx_notes_date ON notes(date)');
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_current_schedule_date ON current_schedule(date)',
+          );
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_current_schedule_group ON current_schedule(group_name)',
+          );
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_archive_schedule_date ON archive_schedule(date)',
+          );
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_archive_schedule_group ON archive_schedule(group_name)',
+          );
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_notes_date ON notes(date)',
+          );
         }
       },
     );
@@ -99,18 +112,28 @@ class DatabaseService {
     ''');
 
     // Создаем индексы для оптимизации запросов
-    await db.execute('CREATE INDEX idx_current_schedule_date ON current_schedule(date)');
-    await db.execute('CREATE INDEX idx_current_schedule_group ON current_schedule(group_name)');
-    await db.execute('CREATE INDEX idx_archive_schedule_date ON archive_schedule(date)');
-    await db.execute('CREATE INDEX idx_archive_schedule_group ON archive_schedule(group_name)');
+    await db.execute(
+      'CREATE INDEX idx_current_schedule_date ON current_schedule(date)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_current_schedule_group ON current_schedule(group_name)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_archive_schedule_date ON archive_schedule(date)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_archive_schedule_group ON archive_schedule(group_name)',
+    );
     await db.execute('CREATE INDEX idx_notes_date ON notes(date)');
   }
 
   Future<void> cacheGroupsAndTeachers(
-      List<String> groups, List<String> teachers) async {
+    List<String> groups,
+    List<String> teachers,
+  ) async {
     final db = await database;
     final batch = db.batch();
-    
+
     batch.delete('groups');
     batch.delete('teachers');
 
@@ -120,16 +143,17 @@ class DatabaseService {
     for (var teacher in teachers) {
       batch.insert('teachers', {'name': teacher});
     }
-    
+
     await batch.commit(noResult: true);
   }
 
   // Сохраняем текущее расписание с использованием батчинга для производительности
   Future<void> saveCurrentSchedule(
-      Map<String, Map<String, List<ScheduleItem>>> scheduleData) async {
+    Map<String, Map<String, List<ScheduleItem>>> scheduleData,
+  ) async {
     final db = await database;
     final batch = db.batch();
-    
+
     // Удаляем старое расписание
     batch.delete('current_schedule');
 
@@ -149,55 +173,67 @@ class DatabaseService {
         }
       }
     }
-    
+
     // Выполняем все операции одной транзакцией
     await batch.commit(noResult: true);
   }
 
-  // Переносим старое расписание в архив
+  // Переносим расписание в архив.
+  //
+  // Архив — это последняя известная версия каждого дня; из него читает
+  // календарь. Раньше день записывался только при условии
+  // `existing.isEmpty`, то есть первая попавшая в архив версия дня
+  // замораживалась навсегда: после замены пары или смены кабинета
+  // экран расписания показывал новые данные, а календарь — старые.
+  // Теперь записи дня заменяются целиком.
+  //
+  // Дни, которых нет в [scheduleData], не трогаются: за их удаление
+  // отвечает cleanOldArchive по сроку хранения.
   Future<void> archiveSchedule(
-      Map<String, Map<String, List<ScheduleItem>>> scheduleData) async {
+    Map<String, Map<String, List<ScheduleItem>>> scheduleData,
+  ) async {
+    if (scheduleData.isEmpty) return;
+
     final db = await database;
 
     await db.transaction((txn) async {
-      for (var date in scheduleData.keys) {
-        final existing = await txn.query(
-          'archive_schedule',
-          where: 'date = ?',
-          whereArgs: [date],
-        );
+      final batch = txn.batch();
 
-        if (existing.isEmpty) {
-          for (var group in scheduleData[date]!.keys) {
-            for (var item in scheduleData[date]![group]!) {
-              await txn.insert('archive_schedule', {
-                'date': date,
-                'group_name': group,
-                'lesson_number': item.lessonNumber,
-                'subject': item.subject,
-                'teacher': item.teacher,
-                'classroom': item.classroom,
-                'subgroup': item.subgroup,
-              });
-            }
+      for (final date in scheduleData.keys) {
+        batch.delete('archive_schedule', where: 'date = ?', whereArgs: [date]);
+
+        for (final group in scheduleData[date]!.keys) {
+          for (final item in scheduleData[date]![group]!) {
+            batch.insert('archive_schedule', {
+              'date': date,
+              'group_name': group,
+              'lesson_number': item.lessonNumber,
+              'subject': item.subject,
+              'teacher': item.teacher,
+              'classroom': item.classroom,
+              'subgroup': item.subgroup,
+            });
           }
         }
       }
+
+      await batch.commit(noResult: true);
     });
   }
 
   Future<Map<String, Map<String, List<ScheduleItem>>>>
-      getCurrentSchedule() async {
+  getCurrentSchedule() async {
     return _getScheduleFromTable('current_schedule');
   }
 
   Future<Map<String, Map<String, List<ScheduleItem>>>>
-      getArchiveSchedule() async {
+  getArchiveSchedule() async {
     return _getScheduleFromTable('archive_schedule');
   }
 
   Future<Map<String, Map<String, List<ScheduleItem>>>> _getScheduleFromTable(
-      String tableName) async {
+    String tableName,
+  ) async {
     final db = await database;
     final scheduleData = <String, Map<String, List<ScheduleItem>>>{};
 
@@ -219,26 +255,51 @@ class DatabaseService {
       scheduleData.putIfAbsent(date, () => {});
       scheduleData[date]!.putIfAbsent(group, () => []);
 
-      scheduleData[date]![group]!.add(ScheduleItem(
-        group: group,
-        lessonNumber: row['lesson_number'] as int,
-        subject: row['subject'] as String,
-        teacher: row['teacher'] as String,
-        classroom: row['classroom'] as String,
-        subgroup: row['subgroup'] as String?,
-      ));
+      scheduleData[date]![group]!.add(
+        ScheduleItem(
+          group: group,
+          lessonNumber: row['lesson_number'] as int,
+          subject: row['subject'] as String,
+          teacher: row['teacher'] as String,
+          classroom: row['classroom'] as String,
+          subgroup: row['subgroup'] as String?,
+        ),
+      );
     }
 
     return scheduleData;
   }
 
+  /// Префикс "YYYY-MM-DD" для поиска заметок по дню независимо от времени.
+  ///
+  /// В таблице notes нет UNIQUE по date, поэтому ConflictAlgorithm.replace
+  /// никогда не срабатывал и каждое сохранение добавляло новую строку.
+  /// Вдобавок дата сохранялась целиком со временем: если день выбирался
+  /// с ненулевым временем (при открытии календаря выбран DateTime.now()),
+  /// то удаление по точному совпадению даты не находило строку —
+  /// заметка исчезала только из памяти и возвращалась после перезапуска.
+  static String _dayPrefix(DateTime date) {
+    final normalized = DateTime(date.year, date.month, date.day);
+    return normalized.toIso8601String().split('T').first;
+  }
+
   Future<void> saveNote(Note note) async {
     final db = await database;
-    await db.insert(
-      'notes',
-      note.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    final normalized = DateTime(note.date.year, note.date.month, note.date.day);
+
+    await db.transaction((txn) async {
+      // Убираем прежние записи этого дня, включая созданные старой версией
+      // приложения со временем в дате.
+      await txn.delete(
+        'notes',
+        where: 'date LIKE ?',
+        whereArgs: ['${_dayPrefix(note.date)}%'],
+      );
+      await txn.insert('notes', {
+        'date': normalized.toIso8601String(),
+        'text': note.text,
+      });
+    });
   }
 
   Future<List<Note>> getNotes() async {
@@ -256,8 +317,8 @@ class DatabaseService {
       final db = await database;
       await db.delete(
         'notes',
-        where: 'date = ?',
-        whereArgs: [date.toIso8601String()],
+        where: 'date LIKE ?',
+        whereArgs: ['${_dayPrefix(date)}%'],
       );
     } catch (e) {
       debugPrint('Ошибка при удалении заметки: $e');
@@ -271,24 +332,16 @@ class DatabaseService {
     _database = null;
   }
 
-  Future<void> cleanOldSchedule(int days) async {
-    try {
-      final db = await database;
-      final cutoffDate = DateTime.now().subtract(Duration(days: days));
-
-      await db.delete(
-        'current_schedule',
-        where: 'date < ?',
-        whereArgs: [cutoffDate.toIso8601String()],
-      );
-
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(
-          'last_schedule_cleanup', DateTime.now().toIso8601String());
-    } catch (e) {
-      debugPrint('Ошибка при очистке старого расписания: $e');
-    }
-  }
+  // ВНИМАНИЕ: здесь раньше был метод cleanOldSchedule(int days), который
+  // сравнивал столбец date (формат "dd.MM.yyyy") со строкой
+  // cutoffDate.toIso8601String() (формат "2026-08-04T..."). Это сравнение
+  // двух разных форматов как текста: любая дата с днём месяца 01–19
+  // считалась меньше порога и удалялась независимо от возраста,
+  // а дни 20–31 не удалялись никогда.
+  //
+  // Метод нигде не вызывался (очисткой занимаются cleanOldArchive и
+  // _cleanCurrentSchedule, оба через DateService), поэтому он удалён,
+  // чтобы его случайно не подключили.
 
   // Чистим старые записи из архива
   // Оставляем только за последние N дней
@@ -298,8 +351,11 @@ class DatabaseService {
     debugPrint('🧹 Очистка архива в базе данных');
     debugPrint('📅 Период хранения: $days дней');
 
-    final records =
-        await db.query('archive_schedule', distinct: true, columns: ['date']);
+    final records = await db.query(
+      'archive_schedule',
+      distinct: true,
+      columns: ['date'],
+    );
     int deletedCount = 0;
 
     // Используем batch для более эффективного удаления
@@ -336,8 +392,11 @@ class DatabaseService {
   // Очищаем текущее расписание от старых записей
   Future<void> _cleanCurrentSchedule(int days) async {
     final db = await database;
-    final records =
-        await db.query('current_schedule', distinct: true, columns: ['date']);
+    final records = await db.query(
+      'current_schedule',
+      distinct: true,
+      columns: ['date'],
+    );
     int deletedCount = 0;
 
     final batch = db.batch();
@@ -358,10 +417,10 @@ class DatabaseService {
     if (deletedCount > 0) {
       await batch.commit(noResult: true);
       debugPrint(
-          '📊 Удалено старых записей из текущего расписания: $deletedCount');
+        '📊 Удалено старых записей из текущего расписания: $deletedCount',
+      );
     }
   }
-
 
   Future<void> recreateDatabase() async {
     final dbPath = await getDatabasesPath();
@@ -432,10 +491,12 @@ class DatabaseService {
   }
 
   Future<void> saveGroupsAndTeachers(
-      List<String> groups, List<String> teachers) async {
+    List<String> groups,
+    List<String> teachers,
+  ) async {
     final db = await database;
     final batch = db.batch();
-    
+
     batch.delete('groups');
     batch.delete('teachers');
 
@@ -445,7 +506,7 @@ class DatabaseService {
     for (var teacher in teachers) {
       batch.insert('teachers', {'name': teacher});
     }
-    
+
     await batch.commit(noResult: true);
   }
 
@@ -472,7 +533,6 @@ class DatabaseService {
 
   // Предварительная загрузка расписания
   Future<void> _preloadSchedule(Database db) async {
-    final List<Map<String, dynamic>> maps = await db.query('current_schedule');
     _scheduleCache = await _getScheduleFromTable('current_schedule');
   }
 
@@ -515,12 +575,13 @@ class DatabaseService {
 
   // Получаем только актуальное расписание из архива (текущий день и будущие дни)
   Future<Map<String, Map<String, List<ScheduleItem>>>>
-      getActualArchiveSchedule() async {
+  getActualArchiveSchedule() async {
     final db = await database;
     final scheduleData = <String, Map<String, List<ScheduleItem>>>{};
 
-    final List<Map<String, dynamic>> results =
-        await db.query('archive_schedule');
+    final List<Map<String, dynamic>> results = await db.query(
+      'archive_schedule',
+    );
 
     debugPrint('🔍 Фильтрация актуального расписания из архива');
 
@@ -534,14 +595,16 @@ class DatabaseService {
         scheduleData.putIfAbsent(dateStr, () => {});
         scheduleData[dateStr]!.putIfAbsent(group, () => []);
 
-        scheduleData[dateStr]![group]!.add(ScheduleItem(
-          group: group,
-          lessonNumber: row['lesson_number'] as int,
-          subject: row['subject'] as String,
-          teacher: row['teacher'] as String,
-          classroom: row['classroom'] as String,
-          subgroup: row['subgroup'] as String?,
-        ));
+        scheduleData[dateStr]![group]!.add(
+          ScheduleItem(
+            group: group,
+            lessonNumber: row['lesson_number'] as int,
+            subject: row['subject'] as String,
+            teacher: row['teacher'] as String,
+            classroom: row['classroom'] as String,
+            subgroup: row['subgroup'] as String?,
+          ),
+        );
 
         debugPrint('✅ Добавлена актуальная дата: $dateStr');
       } else {

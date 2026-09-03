@@ -18,16 +18,21 @@ if (keystorePropertiesFile.exists()) {
 android {
     namespace = "com.gargun.btktimetable"
     compileSdk = 36 // Устанавливаем compileSdk в соответствии с targetSdk
-    ndkVersion = "27.0.12077973"
+    // NDK r28+ требуется для корректного выравнивания нативных
+    // библиотек под страницы памяти 16 КБ (требование Google Play).
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        // Java 17: плагины (в частности flutter_local_notifications 22)
+        // публикуются собранными под 17, с Java 8 сборка падает на
+        // "class file has wrong version".
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
         isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_1_8.toString()
+        jvmTarget = JavaVersion.VERSION_17.toString()
     }
 
     defaultConfig {
@@ -35,23 +40,35 @@ android {
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 26
-        targetSdk = 35 // Обновляем до Android 15 (API 35) для соответствия требованиям Google Play 2025
-        versionCode = 15
-        versionName = "1.0.11"
+        // Google Play: с 31.08.2026 обновления должны быть собраны под Android 16 (API 36)
+        targetSdk = 36
+        versionCode = 16
+        versionName = "1.0.12"
     }
 
     signingConfigs {
-        create("release") {
-            keyAlias = keystoreProperties["keyAlias"].toString()
-            keyPassword = keystoreProperties["keyPassword"].toString()
-            storeFile = file(keystoreProperties["storeFile"].toString())
-            storePassword = keystoreProperties["storePassword"].toString()
+        // key.properties не хранится в репозитории. Без него (например, в CI)
+        // конфигурация подписи не создаётся, иначе Gradle падал на строке "null".
+        if (keystorePropertiesFile.exists()) {
+            create("release") {
+                keyAlias = keystoreProperties["keyAlias"].toString()
+                keyPassword = keystoreProperties["keyPassword"].toString()
+                storeFile = file(keystoreProperties["storeFile"].toString())
+                storePassword = keystoreProperties["storePassword"].toString()
+            }
         }
     }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = if (keystorePropertiesFile.exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                // Отладочная подпись: собрать и проверить сборку можно,
+                // но опубликовать такой артефакт нельзя.
+                logger.warn("key.properties не найден — release подписывается debug-ключом")
+                signingConfigs.getByName("debug")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -60,6 +77,14 @@ android {
             // Отключаем минификацию для отладочной сборки
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+    }
+
+    // Требование Google Play (с 01.11.2025): поддержка страниц памяти 16 КБ.
+    // Несжатые нативные библиотеки позволяют системе загружать их с корректным выравниванием.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
         }
     }
 

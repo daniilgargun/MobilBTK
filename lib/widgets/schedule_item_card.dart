@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../models/schedule_model.dart';
 import '../models/lesson_time_model.dart';
 
@@ -34,7 +35,8 @@ class ScheduleItemCard extends StatelessWidget {
     final double bottomPadding = isCompact ? 6.0 : 12.0;
 
     // Создаем семантическое описание для accessibility
-    final semanticLabel = '${item.lessonNumber} пара, ${item.subject}, '
+    final semanticLabel =
+        '${item.lessonNumber} пара, ${item.subject}, '
         'преподаватель ${item.teacher}, кабинет ${item.classroom}, '
         'группа ${item.group}${showSubgroup ? ', подгруппа ${item.subgroup}' : ''}';
 
@@ -108,7 +110,9 @@ class ScheduleItemCard extends StatelessWidget {
                       children: [
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 3),
+                            horizontal: 6,
+                            vertical: 3,
+                          ),
                           decoration: BoxDecoration(
                             color: theme.colorScheme.primaryContainer,
                             borderRadius: BorderRadius.circular(6),
@@ -125,13 +129,17 @@ class ScheduleItemCard extends StatelessWidget {
                         if (showSubgroup)
                           Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
                             decoration: BoxDecoration(
                               color: theme.colorScheme.tertiaryContainer,
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
-                              isCompact ? 'Пг ${item.subgroup}' : 'Подгруппа ${item.subgroup}',
+                              isCompact
+                                  ? 'Пг ${item.subgroup}'
+                                  : 'Подгруппа ${item.subgroup}',
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: theme.colorScheme.onTertiaryContainer,
                               ),
@@ -179,19 +187,24 @@ class ScheduleItemCard extends StatelessWidget {
                           color: theme.colorScheme.primary,
                         ),
                         const SizedBox(width: 4),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 5, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: theme.colorScheme.primaryContainer,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            item.classroom,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onPrimaryContainer,
+                        Flexible(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 2,
                             ),
-                            overflow: TextOverflow.ellipsis,
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              item.classroom,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onPrimaryContainer,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                         ),
                       ],

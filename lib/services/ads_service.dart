@@ -1,265 +1,189 @@
-import 'package:flutter/material.dart';
+/*
+ * Copyright (c) 2024 Daniil Gargun. All rights reserved.
+ * Author: Daniil Gargun | Telegram: @Daniilgargun | Email: daniilgorgun38@gmail.com
+ */
+
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:yandex_mobileads/mobile_ads.dart';
 
+/// Реклама с вознаграждением («поддержать разработчика»).
+///
+/// Переписан под Yandex Mobile Ads 8.x:
+/// `MobileAds` → `YandexAds`, `RewardedAdLoader.create()` → обычный
+/// конструктор, `loadAd()` теперь возвращает готовый `RewardedAd`
+/// вместо доставки результата через колбэки.
 class AdsService {
   static final AdsService _instance = AdsService._internal();
   factory AdsService() => _instance;
   AdsService._internal();
 
-  bool _isInitialized = false;
-  
-  // ID рекламных блоков
+  // ID рекламного блока
   static const String _rewardedAdUnitId = 'R-M-14828109-1';
 
-  // Экземпляр загрузчика рекламы
-  RewardedAdLoader? _rewardedAdLoader;
-  
-  // Загруженная реклама с вознаграждением
+  static const Duration _loadTimeout = Duration(seconds: 20);
+
+  bool _isInitialized = false;
+
+  final RewardedAdLoader _rewardedAdLoader = RewardedAdLoader();
+
   RewardedAd? _rewardedAd;
-  
-  // Флаг, указывающий, что реклама в процессе показа
+
+  /// Показ уже идёт — повторный показ и параллельная загрузка запрещены.
   bool _isAdShowing = false;
 
-  // Инициализация SDK
+  /// Загрузка уже идёт. Раньше несколько параллельных вызовов
+  /// `_loadRewardedAd()` могли создать несколько объявлений и потерять
+  /// ссылку на предыдущее, не уничтожив его.
+  Future<void>? _pendingLoad;
+
+  /// Инициализация SDK.
   Future<void> initialize() async {
-    // Если уже инициализировано, не делаем повторную инициализацию
     if (_isInitialized) return;
-    
+
     try {
-      // Инициализируем SDK с обработкой возможных ошибок
-      await MobileAds.initialize();
+      await YandexAds.initialize();
       _isInitialized = true;
-      debugPrint('Яндекс.Ads успешно инициализирован');
-      
-      // Создаем загрузчик рекламы
-      await _createRewardedAdLoader();
+      debugPrint('✅ Яндекс.Ads успешно инициализирован');
+
+      // Предзагружаем первое объявление, но не ждём его.
+      unawaited(_loadRewardedAd());
     } catch (e) {
-      // Логируем ошибку, но не позволяем приложению упасть
-      debugPrint('Ошибка при инициализации Яндекс.Ads: $e');
-      _isInitialized = false; // Помечаем, что инициализация не удалась
+      debugPrint('❌ Ошибка при инициализации Яндекс.Ads: $e');
+      _isInitialized = false;
     }
   }
 
-  // Безопасное уничтожение рекламы
+  /// Безопасно уничтожает текущее объявление.
   Future<void> _safeDestroyAd() async {
+    final adToDestroy = _rewardedAd;
+    _rewardedAd = null;
+    if (adToDestroy == null) return;
+
     try {
-      final adToDestroy = _rewardedAd;
-      if (adToDestroy != null) {
-        _rewardedAd = null; // Сначала обнуляем ссылку
-        await Future.delayed(const Duration(milliseconds: 100)); // Небольшая задержка
-        adToDestroy.destroy(); // Затем уничтожаем
-      }
+      await adToDestroy.destroy();
     } catch (e) {
-      debugPrint('Ошибка при уничтожении рекламы: $e');
+      debugPrint('⚠️ Ошибка при уничтожении рекламы: $e');
     }
   }
 
-  // Создание загрузчика рекламы с вознаграждением
-  Future<void> _createRewardedAdLoader() async {
-    try {
-      _rewardedAdLoader = await RewardedAdLoader.create(
-        onAdLoaded: (RewardedAd rewardedAd) {
-          debugPrint('Реклама с вознаграждением загружена');
-          // Если уже есть загруженная реклама, уничтожаем старую
-          if (_rewardedAd != null && _rewardedAd != rewardedAd) {
-            _safeDestroyAd();
-          }
-          _rewardedAd = rewardedAd;
-        },
-        onAdFailedToLoad: (error) {
-          debugPrint('Ошибка загрузки рекламы с вознаграждением: ${error.description}');
-          _rewardedAd = null;
-        },
-      );
-      
-      // После успешного создания загрузчика сразу загружаем рекламу
-      await _loadRewardedAd();
-    } catch (e) {
-      debugPrint('Ошибка при создании загрузчика рекламы: $e');
-    }
+  /// Загружает объявление. Повторные вызовы во время загрузки
+  /// присоединяются к уже идущей.
+  Future<void> _loadRewardedAd() {
+    final pending = _pendingLoad;
+    if (pending != null) return pending;
+
+    final future = _doLoadRewardedAd().whenComplete(() {
+      _pendingLoad = null;
+    });
+    _pendingLoad = future;
+    return future;
   }
 
-  // Загрузка рекламы с вознаграждением
-  Future<void> _loadRewardedAd() async {
-    if (!_isInitialized) {
-      debugPrint('SDK не инициализирован, пропускаем загрузку рекламы');
-      return;
-    }
-    
-    // Если реклама уже показывается, не пытаемся загрузить новую
-    if (_isAdShowing) {
-      debugPrint('Реклама в процессе показа, пропускаем загрузку новой');
-      return;
-    }
-    
-    if (_rewardedAdLoader == null) {
-      debugPrint('Загрузчик рекламы не создан, создаем новый');
-      await _createRewardedAdLoader();
-      if (_rewardedAdLoader == null) {
-        debugPrint('Не удалось создать загрузчик рекламы');
+  Future<void> _doLoadRewardedAd() async {
+    if (!_isInitialized || _isAdShowing || _rewardedAd != null) return;
+
+    try {
+      final ad = await _rewardedAdLoader
+          .loadAd(adRequest: const AdRequest(adUnitId: _rewardedAdUnitId))
+          .timeout(_loadTimeout);
+
+      // Пока грузились, показ мог начаться — тогда объявление не нужно.
+      if (_isAdShowing) {
+        await ad.destroy();
         return;
       }
-    }
-    
-    try {
-      await _rewardedAdLoader?.loadAd(
-        adRequestConfiguration: AdRequestConfiguration(
-          adUnitId: _rewardedAdUnitId,
-        ),
-      );
+
+      _rewardedAd = ad;
+      debugPrint('✅ Реклама с вознаграждением загружена');
+    } on AdRequestError catch (e) {
+      debugPrint('⚠️ Ошибка загрузки рекламы: ${e.description}');
+      _rewardedAd = null;
+    } on TimeoutException {
+      debugPrint('⚠️ Таймаут загрузки рекламы');
+      _rewardedAd = null;
     } catch (e) {
-      debugPrint('Ошибка при загрузке рекламы с вознаграждением: $e');
+      debugPrint('⚠️ Не удалось загрузить рекламу: $e');
+      _rewardedAd = null;
     }
   }
 
-  // Показ рекламы с вознаграждением
+  /// Показывает объявление и возвращает true, если пользователь досмотрел его
+  /// до конца и получил вознаграждение.
   Future<bool> showRewardedAd() async {
-    // Если уже показываем рекламу, не запускаем новый показ
     if (_isAdShowing) {
-      debugPrint('Реклама уже показывается, пропускаем повторный показ');
+      debugPrint('⏭️ Реклама уже показывается');
       return false;
     }
-    
-    // Если SDK не инициализирован, пытаемся инициализировать
+
     if (!_isInitialized) {
-      debugPrint('SDK не инициализирован, пытаемся инициализировать');
       await initialize();
-      
-      // Если инициализация не удалась, выходим
-      if (!_isInitialized) {
-        debugPrint('Не удалось инициализировать SDK, показ рекламы невозможен');
-        return false;
-      }
+      if (!_isInitialized) return false;
     }
-    
-    // Если реклама не загружена, пытаемся загрузить
+
     if (_rewardedAd == null) {
-      debugPrint('Реклама не загружена, пытаемся загрузить');
       await _loadRewardedAd();
-      
-      // Даем немного времени на загрузку рекламы
-      await Future.delayed(const Duration(seconds: 1));
-      
-      // Если реклама все еще не загружена, выходим
       if (_rewardedAd == null) {
-        debugPrint('Не удалось загрузить рекламу');
+        debugPrint('⚠️ Не удалось загрузить рекламу для показа');
         return false;
       }
     }
-    
-    bool rewarded = false;
-    _isAdShowing = true; // Устанавливаем флаг, что реклама показывается
-    
+
+    final adToShow = _rewardedAd;
+    if (adToShow == null) return false;
+
+    _isAdShowing = true;
+    var rewarded = false;
+
     try {
-      RewardedAd? adToShow = _rewardedAd;
-      
-      if (adToShow == null) {
-        _isAdShowing = false;
-        return false;
-      }
-      
-      // Устанавливаем слушатель событий рекламы
-      adToShow.setAdEventListener(
+      await adToShow.setAdEventListener(
         eventListener: RewardedAdEventListener(
-          onAdShown: () {
-            debugPrint('Реклама показана');
-          },
-          onAdFailedToShow: (error) {
-            debugPrint('Ошибка показа рекламы: ${error.description}');
-            _isAdShowing = false;
-            
-            // Безопасное уничтожение рекламы с отложенным запуском загрузки новой
-            Future.microtask(() async {
-              await _safeDestroyAd();
-              await Future.delayed(const Duration(milliseconds: 300));
-              await _loadRewardedAd();
-            });
-          },
-          onAdDismissed: () {
-            debugPrint('Реклама закрыта');
-            _isAdShowing = false;
-            
-            // Безопасное уничтожение рекламы с отложенным запуском загрузки новой
-            Future.microtask(() async {
-              await _safeDestroyAd();
-              await Future.delayed(const Duration(milliseconds: 300));
-              await _loadRewardedAd();
-            });
-          },
-          onAdClicked: () {
-            debugPrint('Клик по рекламе');
-          },
-          onAdImpression: (data) {
-            debugPrint('Показ рекламы');
-          },
+          onAdShown: () => debugPrint('▶️ Реклама показана'),
+          onAdFailedToShow: (error) =>
+              debugPrint('⚠️ Ошибка показа рекламы: ${error.description}'),
+          onAdDismissed: () => debugPrint('⏹️ Реклама закрыта'),
+          onAdClicked: () => debugPrint('👆 Клик по рекламе'),
+          onAdImpression: (_) => debugPrint('👁️ Показ засчитан'),
           onRewarded: (reward) {
-            debugPrint('Награда получена: ${reward.amount} ${reward.type}');
+            debugPrint('🎁 Награда: ${reward.amount} ${reward.type}');
             rewarded = true;
           },
         ),
       );
-      
-      // Показываем рекламу
+
       await adToShow.show();
-      
-      try {
-        // Ждем завершения просмотра
-        final rewardResult = await adToShow.waitForDismiss();
-        
-        // Если получили награду
-        if (rewardResult != null) {
-          debugPrint('Получено ${rewardResult.amount} ${rewardResult.type}');
-          rewarded = true;
-        }
-      } catch (e) {
-        debugPrint('Ошибка ожидания завершения рекламы: $e');
+
+      final rewardResult = await adToShow.waitForDismiss();
+      if (rewardResult != null) {
+        rewarded = true;
       }
-      
+
       return rewarded;
     } catch (e) {
-      debugPrint('Ошибка при показе рекламы: $e');
-      // В случае ошибки очищаем ресурсы
-      _isAdShowing = false;
-      await _safeDestroyAd();
+      debugPrint('❌ Ошибка при показе рекламы: $e');
       return false;
     } finally {
-      // Гарантируем, что флаг будет сброшен
       _isAdShowing = false;
-      // И запустим загрузку новой рекламы через некоторое время
-      Future.delayed(const Duration(milliseconds: 500), _loadRewardedAd);
+      // Объявление одноразовое: уничтожаем и готовим следующее.
+      await _safeDestroyAd();
+      unawaited(_loadRewardedAd());
     }
   }
 
-  // Проверка доступности рекламы
+  /// Готово ли объявление к показу.
   Future<bool> isAdAvailable() async {
-    // Если реклама показывается, возвращаем false
-    if (_isAdShowing) {
-      return false;
-    }
-    
+    if (_isAdShowing) return false;
+
     if (!_isInitialized) {
-      try {
-        await initialize();
-      } catch (e) {
-        debugPrint('Ошибка при инициализации SDK: $e');
-        return false;
-      }
-      
-      if (!_isInitialized) {
-        return false;
-      }
+      await initialize();
+      if (!_isInitialized) return false;
     }
-    
+
     if (_rewardedAd == null) {
-      try {
-        await _loadRewardedAd();
-        // Даем время на загрузку рекламы
-        await Future.delayed(const Duration(seconds: 1));
-      } catch (e) {
-        debugPrint('Ошибка при загрузке рекламы: $e');
-      }
+      await _loadRewardedAd();
     }
-    
+
     return _rewardedAd != null && !_isAdShowing;
   }
-} 
+}

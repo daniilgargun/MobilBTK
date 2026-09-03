@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import '../providers/personalization_provider.dart';
 import '../models/personalization_settings.dart';
 import '../themes/theme_presets.dart';
 import '../widgets/schedule_item_card.dart';
 import '../models/schedule_model.dart';
+
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 
 /// Экран настроек персонализации интерфейса
@@ -103,18 +105,15 @@ class PersonalizationScreen extends StatelessWidget {
                   children: [
                     Text(
                       title,
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
-                          ),
+                      style: Theme.of(context).textTheme.titleSmall
+                          ?.copyWith(fontWeight: FontWeight.bold, fontSize: 15),
                     ),
                     Text(
                       subtitle,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color:
-                                Theme.of(context).colorScheme.onSurfaceVariant,
-                            fontSize: 11,
-                          ),
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontSize: 11,
+                      ),
                     ),
                   ],
                 ),
@@ -135,8 +134,8 @@ class PersonalizationScreen extends StatelessWidget {
   ) {
     return Card(
       elevation: 0,
-      color:
-          Theme.of(context).colorScheme.surfaceVariant.withValues(alpha: 0.3),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest
+          .withValues(alpha: 0.3),
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Wrap(
@@ -191,99 +190,106 @@ class PersonalizationScreen extends StatelessWidget {
                   Text(
                     label,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          fontSize: 10,
-                          fontWeight:
-                              isSelected ? FontWeight.bold : FontWeight.normal,
-                          color: isSelected
-                              ? Theme.of(context).colorScheme.primary
-                              : Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
+                      fontSize: 10,
+                      fontWeight: isSelected
+                          ? FontWeight.bold
+                          : FontWeight.normal,
+                      color: isSelected
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               );
             }),
             // Кнопка палитры для выбора любого цвета
-            Builder(builder: (context) {
-              final isSelected = settings.themePreset == 'Custom';
-              // If isSelected, use settings.seedColor, otherwise use a rainbow/grey
-              final color = isSelected
-                  ? settings.seedColor
-                  : Theme.of(context).colorScheme.surfaceContainerHighest;
+            Builder(
+              builder: (context) {
+                final isSelected = settings.themePreset == 'Custom';
+                // If isSelected, use settings.seedColor, otherwise use a rainbow/grey
+                final color = isSelected
+                    ? settings.seedColor
+                    : Theme.of(context).colorScheme.surfaceContainerHighest;
 
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeInOut,
-                    child: Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        onTap: () => _showColorPicker(context, provider),
-                        borderRadius: BorderRadius.circular(50),
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 200),
-                          width: 60,
-                          height: 60,
-                          decoration: BoxDecoration(
-                            color: color,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: isSelected
-                                  ? Theme.of(context).colorScheme.primary
-                                  : Theme.of(context)
-                                      .colorScheme
-                                      .outlineVariant,
-                              width: isSelected ? 4 : 2,
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeInOut,
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: () => _showColorPicker(context, provider),
+                          borderRadius: BorderRadius.circular(50),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            width: 60,
+                            height: 60,
+                            decoration: BoxDecoration(
+                              color: color,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: isSelected
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Theme.of(context)
+                                          .colorScheme
+                                          .outlineVariant,
+                                width: isSelected ? 4 : 2,
+                              ),
+                              gradient:
+                                  !isSelected // Show gradient rainbow if not selected
+                                  ? const SweepGradient(
+                                      colors: [
+                                        Colors.red,
+                                        Colors.orange,
+                                        Colors.yellow,
+                                        Colors.green,
+                                        Colors.blue,
+                                        Colors.indigo,
+                                        Colors.purple,
+                                        Colors.red,
+                                      ],
+                                    )
+                                  : null,
+                              boxShadow: isSelected
+                                  ? [
+                                      BoxShadow(
+                                        color: color.withValues(alpha: 0.4),
+                                        blurRadius: 8,
+                                        spreadRadius: 1,
+                                      ),
+                                    ]
+                                  : [],
                             ),
-                            gradient:
-                                !isSelected // Show gradient rainbow if not selected
-                                    ? const SweepGradient(
-                                        colors: [
-                                          Colors.red,
-                                          Colors.orange,
-                                          Colors.yellow,
-                                          Colors.green,
-                                          Colors.blue,
-                                          Colors.indigo,
-                                          Colors.purple,
-                                          Colors.red,
-                                        ],
-                                      )
-                                    : null,
-                            boxShadow: isSelected
-                                ? [
-                                    BoxShadow(
-                                      color: color.withValues(alpha: 0.4),
-                                      blurRadius: 8,
-                                      spreadRadius: 1,
-                                    ),
-                                  ]
-                                : [],
+                            child: isSelected
+                                ? null
+                                : const Icon(
+                                    Icons.colorize,
+                                    color: Colors.white,
+                                    size: 24,
+                                  ),
                           ),
-                          child: isSelected
-                              ? null
-                              : const Icon(Icons.colorize,
-                                  color: Colors.white, size: 24),
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Свой',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          fontSize: 10,
-                          fontWeight:
-                              isSelected ? FontWeight.bold : FontWeight.normal,
-                          color: isSelected
-                              ? Theme.of(context).colorScheme.primary
-                              : Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                  ),
-                ],
-              );
-            }),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Свой',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontSize: 10,
+                        fontWeight: isSelected
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                        color: isSelected
+                            ? Theme.of(context).colorScheme.primary
+                            : Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
           ],
         ),
       ),
@@ -297,8 +303,8 @@ class PersonalizationScreen extends StatelessWidget {
   ) {
     return Card(
       elevation: 0,
-      color:
-          Theme.of(context).colorScheme.surfaceVariant.withValues(alpha: 0.3),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest
+          .withValues(alpha: 0.3),
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Row(
@@ -356,10 +362,8 @@ class PersonalizationScreen extends StatelessWidget {
               border: Border.all(
                 color: isSelected
                     ? Theme.of(context).colorScheme.primary
-                    : Theme.of(context)
-                        .colorScheme
-                        .outline
-                        .withValues(alpha: 0.2),
+                    : Theme.of(context).colorScheme.outline
+                          .withValues(alpha: 0.2),
                 width: isSelected ? 2 : 1,
               ),
             ),
@@ -377,26 +381,24 @@ class PersonalizationScreen extends StatelessWidget {
                 Text(
                   title,
                   style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                        color: isSelected
-                            ? Theme.of(context).colorScheme.onPrimaryContainer
-                            : Theme.of(context).colorScheme.onSurface,
-                      ),
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: isSelected
+                        ? Theme.of(context).colorScheme.onPrimaryContainer
+                        : Theme.of(context).colorScheme.onSurface,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   description,
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        fontSize: 10,
-                        color: isSelected
-                            ? Theme.of(context)
-                                .colorScheme
-                                .onPrimaryContainer
-                                .withValues(alpha: 0.8)
-                            : Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
+                    fontSize: 10,
+                    color: isSelected
+                        ? Theme.of(context).colorScheme.onPrimaryContainer
+                              .withValues(alpha: 0.8)
+                        : Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
@@ -420,8 +422,8 @@ class PersonalizationScreen extends StatelessWidget {
 
     return Card(
       elevation: 0,
-      color:
-          Theme.of(context).colorScheme.surfaceVariant.withValues(alpha: 0.3),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest
+          .withValues(alpha: 0.3),
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -472,10 +474,10 @@ class PersonalizationScreen extends StatelessWidget {
                   ? 'Так будет выглядеть карточка занятия'
                   : 'Так будет выглядеть расписание в сетке',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    fontSize: 10,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontStyle: FontStyle.italic,
-                  ),
+                fontSize: 10,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontStyle: FontStyle.italic,
+              ),
               textAlign: TextAlign.center,
             ),
           ],
@@ -510,10 +512,7 @@ class PersonalizationScreen extends StatelessWidget {
                 SnackBar(
                   content: const Text('Настройки сброшены'),
                   behavior: SnackBarBehavior.floating,
-                  action: SnackBarAction(
-                    label: 'OK',
-                    onPressed: () {},
-                  ),
+                  action: SnackBarAction(label: 'OK', onPressed: () {}),
                 ),
               );
             },
@@ -525,7 +524,9 @@ class PersonalizationScreen extends StatelessWidget {
   }
 
   void _showColorPicker(
-      BuildContext context, PersonalizationProvider provider) {
+    BuildContext context,
+    PersonalizationProvider provider,
+  ) {
     Color pickerColor = provider.settings.seedColor;
 
     showDialog(
@@ -541,8 +542,9 @@ class PersonalizationScreen extends StatelessWidget {
             pickerAreaHeightPercent: 0.8,
             enableAlpha: false,
             displayThumbColor: true,
-            showLabel: true, // Show hex code
-            labelTypes: const [], // Default shows all, or we can customize
+            // Пустой labelTypes уже отключает подписи, поэтому устаревший
+            // showLabel не нужен — поведение не меняется.
+            labelTypes: const [],
             paletteType: PaletteType.hsvWithHue,
             hexInputBar: true, // Enable HEX input
           ),

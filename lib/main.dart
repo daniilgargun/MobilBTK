@@ -22,6 +22,7 @@ import 'dart:io';
 import 'package:firebase_core/firebase_core.dart';
 
 import 'package:dynamic_color/dynamic_color.dart';
+import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -44,123 +45,127 @@ import 'services/connectivity_service.dart';
 import 'services/database_service.dart';
 import 'services/notification_service.dart';
 import 'themes/theme_presets.dart';
+
 import 'package:workmanager/workmanager.dart';
 import 'package:upgrader/upgrader.dart';
+
 import 'services/home_widget_service.dart';
 
 void main() {
   // Используем runZonedGuarded для перехвата всех необработанных ошибок
-  runZonedGuarded(() async {
-    // Убедимся, что все биндинги Flutter инициализированы
-    WidgetsFlutterBinding.ensureInitialized();
+  runZonedGuarded(
+    () async {
+      // Убедимся, что все биндинги Flutter инициализированы
+      WidgetsFlutterBinding.ensureInitialized();
 
-    // Инициализация Firebase
-    await Firebase.initializeApp();
+      // Инициализация Firebase
+      await Firebase.initializeApp();
 
-    // Настраиваем отображение от края до края (Edge-to-Edge)
-    // Это позволяет приложению рисовать под системными панелями
-    if (!kIsWeb && Platform.isAndroid) {
+      // Настраиваем отображение от края до края (Edge-to-Edge)
+      // Это позволяет приложению рисовать под системными панелями
+      if (!kIsWeb && Platform.isAndroid) {
+        try {
+          SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+          // ИСПРАВЛЕНИЕ: Удалена первоначальная жесткая настройка цвета иконок.
+          // Теперь стиль будет применен в MyHomePage в зависимости от темы,
+          // что предотвращает "моргание" и невидимые иконки при запуске.
+        } catch (e) {
+          debugPrint('Ошибка настройки системного UI (edge-to-edge): $e');
+        }
+      }
+
+      // Глобальный обработчик ошибок Flutter
+      FlutterError.onError = (FlutterErrorDetails details) {
+        // Игнорируем специфическую ошибку OpenGL, которая не является критической
+        if (!details.toString().contains('OpenGL ES API')) {
+          debugPrint('Перехвачена ошибка Flutter: ${details.exception}');
+          FlutterError.presentError(details);
+        }
+      };
+
+      // Инициализируем временные зоны для работы с датами и уведомлениями
+      tz.initializeTimeZones();
+
+      // Устанавливаем русскую локаль для форматирования дат
+      await initializeDateFormatting('ru_RU', null);
+
+      // Инициализация сервиса проверки подключения к сети
+      final connectivityService = ConnectivityService();
+      await connectivityService.init();
+
+      // Инициализация виджета
+      // await HomeWidgetService.initialize();
+      await HomeWidgetService.updateBellScheduleData();
+
+      // Инициализация сервиса уведомлений
+      await NotificationService().initialize();
+
+      // Инициализация базы данных
+      await DatabaseService().database;
+
+      // Создаем и загружаем данные для провайдеров
+      final scheduleProvider = ScheduleProvider();
+      final notesProvider = NotesProvider();
+      final personalizationProvider = PersonalizationProvider();
+
+      // Устанавливаем провайдер в ConnectivityService для фоновых задач
+      connectivityService.setScheduleProvider(scheduleProvider);
+
+      // Инициализация workmanager для периодических обновлений
+      // Синхронизация при восстановлении связи работает через ConnectivityService
       try {
-        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-        // ИСПРАВЛЕНИЕ: Удалена первоначальная жесткая настройка цвета иконок.
-        // Теперь стиль будет применен в MyHomePage в зависимости от темы,
-        // что предотвращает "моргание" и невидимые иконки при запуске.
+        await Workmanager().initialize(callbackDispatcher);
+
+        // Регистрируем периодическую задачу обновления расписания
+        // Обновление каждый час, но только в рабочее время (7-19, кроме воскресенья)
+        // Проверка времени выполняется внутри задачи
+        await Workmanager().registerPeriodicTask(
+          'schedule-sync',
+          'syncSchedule',
+          frequency: const Duration(minutes: 15),
+          constraints: Constraints(networkType: NetworkType.connected),
+          // Не пересоздаём уже запланированную задачу на каждом запуске
+          // приложения — иначе отсчёт периода начинается заново и
+          // фоновая синхронизация может не сработать ни разу.
+          existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
+        );
       } catch (e) {
-        debugPrint('Ошибка настройки системного UI (edge-to-edge): $e');
+        debugPrint('Ошибка инициализации Workmanager: $e');
       }
-    }
 
-    // Глобальный обработчик ошибок Flutter
-    FlutterError.onError = (FlutterErrorDetails details) {
-      // Игнорируем специфическую ошибку OpenGL, которая не является критической
-      if (!details.toString().contains('OpenGL ES API')) {
-        debugPrint('Перехвачена ошибка Flutter: ${details.exception}');
-        FlutterError.presentError(details);
+      // Запускаем инициализацию рекламы с задержкой, чтобы не блокировать старт
+      if (!kIsWeb) {
+        Future.delayed(const Duration(seconds: 3), () {
+          AdsService().initialize().catchError((e, stackTrace) {
+            // РЕКОМЕНДАЦИЯ: Для релизных версий здесь стоит использовать
+            // сервис для сбора ошибок, например, Firebase Crashlytics или Sentry.
+            debugPrint('------ ОШИБКА ИНИЦИАЛИЗАЦИИ РЕКЛАМЫ ------');
+            debugPrint('Ошибка: $e');
+            debugPrint('Стек: $stackTrace');
+            debugPrint('------------------------------------------');
+          });
+        });
       }
-    };
 
-    // Инициализируем временные зоны для работы с датами и уведомлениями
-    tz.initializeTimeZones();
-
-    // Устанавливаем русскую локаль для форматирования дат
-    await initializeDateFormatting('ru_RU', null);
-
-    // Инициализация сервиса проверки подключения к сети
-    final connectivityService = ConnectivityService();
-    await connectivityService.init();
-
-    // Инициализация виджета
-    // await HomeWidgetService.initialize();
-    await HomeWidgetService.updateBellScheduleData();
-
-    // Инициализация сервиса уведомлений
-    await NotificationService().initialize();
-
-    // Инициализация базы данных
-    await DatabaseService().database;
-
-    // Создаем и загружаем данные для провайдеров
-    final scheduleProvider = ScheduleProvider();
-    final notesProvider = NotesProvider();
-    final personalizationProvider = PersonalizationProvider();
-
-    // Устанавливаем провайдер в ConnectivityService для фоновых задач
-    connectivityService.setScheduleProvider(scheduleProvider);
-
-    // Инициализация workmanager для периодических обновлений
-    // Синхронизация при восстановлении связи работает через ConnectivityService
-    try {
-      await Workmanager().initialize(
-        callbackDispatcher,
-        isInDebugMode: kDebugMode,
-      );
-
-      // Регистрируем периодическую задачу обновления расписания
-      // Обновление каждый час, но только в рабочее время (7-19, кроме воскресенья)
-      // Проверка времени выполняется внутри задачи
-      await Workmanager().registerPeriodicTask(
-        'schedule-sync',
-        'syncSchedule',
-        frequency: const Duration(minutes: 15),
-        constraints: Constraints(
-          networkType: NetworkType.connected,
+      // Запускаем приложение
+      runApp(
+        MultiProvider(
+          providers: [
+            // Используем .value для существующих экземпляров провайдеров
+            ChangeNotifierProvider.value(value: scheduleProvider),
+            ChangeNotifierProvider.value(value: notesProvider),
+            ChangeNotifierProvider.value(value: personalizationProvider),
+          ],
+          child: MyApp(key: myAppKey),
         ),
       );
-    } catch (e) {
-      debugPrint('Ошибка инициализации Workmanager: $e');
-    }
-
-    // Запускаем инициализацию рекламы с задержкой, чтобы не блокировать старт
-    if (!kIsWeb) {
-      Future.delayed(const Duration(seconds: 3), () {
-        AdsService().initialize().catchError((e, stackTrace) {
-          // РЕКОМЕНДАЦИЯ: Для релизных версий здесь стоит использовать
-          // сервис для сбора ошибок, например, Firebase Crashlytics или Sentry.
-          debugPrint('------ ОШИБКА ИНИЦИАЛИЗАЦИИ РЕКЛАМЫ ------');
-          debugPrint('Ошибка: $e');
-          debugPrint('Стек: $stackTrace');
-          debugPrint('------------------------------------------');
-        });
-      });
-    }
-
-    // Запускаем приложение
-    runApp(
-      MultiProvider(
-        providers: [
-          // Используем .value для существующих экземпляров провайдеров
-          ChangeNotifierProvider.value(value: scheduleProvider),
-          ChangeNotifierProvider.value(value: notesProvider),
-          ChangeNotifierProvider.value(value: personalizationProvider),
-        ],
-        child: MyApp(key: myAppKey),
-      ),
-    );
-  }, (error, stack) {
-    // Логируем ошибки, которые не были пойманы Flutter
-    debugPrint('Неперехваченная ошибка в ZonedGuarded: $error');
-    debugPrint('Стек: $stack');
-  });
+    },
+    (error, stack) {
+      // Логируем ошибки, которые не были пойманы Flutter
+      debugPrint('Неперехваченная ошибка в ZonedGuarded: $error');
+      debugPrint('Стек: $stack');
+    },
+  );
 }
 
 // Обработчик фоновых задач для workmanager
@@ -177,12 +182,12 @@ void callbackDispatcher() {
         await initializeDateFormatting('ru_RU', null);
 
         await ConnectivityService.performPeriodicSync();
-        return Future.value(true);
+        return true;
       }
-      return Future.value(false);
+      return false;
     } catch (e) {
       debugPrint('❌ Ошибка выполнения фоновой задачи: $e');
-      return Future.value(false);
+      return false;
     }
   });
 }
@@ -229,13 +234,12 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
   Future<void> _checkWidgetSettingsAction() async {
     try {
       const platform = MethodChannel('com.gargun.btktimetable/widget');
-      final bool? shouldOpenSettings =
-          await platform.invokeMethod('checkWidgetSettingsAction');
+      final bool? shouldOpenSettings = await platform.invokeMethod(
+        'checkWidgetSettingsAction',
+      );
       if (shouldOpenSettings == true) {
         navigatorKey.currentState?.push(
-          MaterialPageRoute(
-            builder: (context) => const WidgetSettingsScreen(),
-          ),
+          MaterialPageRoute(builder: (context) => const WidgetSettingsScreen()),
         );
       }
     } catch (e) {
@@ -247,6 +251,8 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
     try {
       const platform = MethodChannel('com.gargun.btktimetable/widget');
       final int? appWidgetId = await platform.invokeMethod('getAppWidgetId');
+      if (!mounted) return;
+
       if (appWidgetId != null && appWidgetId != 0) {
         setState(() {
           _isWidgetConfiguration = true;
@@ -275,6 +281,8 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
     } else {
       isDarkMode = savedTheme;
     }
+
+    if (!mounted) return;
 
     setState(() {
       _isDarkMode = isDarkMode;
@@ -306,74 +314,74 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
     return Consumer<PersonalizationProvider>(
       builder: (context, personalizationProvider, _) {
         return DynamicColorBuilder(
-            builder: (ColorScheme? lightDynamic, ColorScheme? darkDynamic) {
-          final settings = personalizationProvider.settings;
-          ColorScheme lightColorScheme;
-          ColorScheme darkColorScheme;
+          builder: (ColorScheme? lightDynamic, ColorScheme? darkDynamic) {
+            final settings = personalizationProvider.settings;
+            ColorScheme lightColorScheme;
+            ColorScheme darkColorScheme;
 
-          if (_useDynamicColors &&
-              lightDynamic != null &&
-              darkDynamic != null) {
-            // Если динамические цвета включены и доступны, используем их
-            lightColorScheme = lightDynamic;
-            darkColorScheme = darkDynamic;
-          } else {
-            // Используем настройки персонализации или стандартную схему
-            final seedColor = ThemePresets.getColor(settings.themePreset) ??
-                settings.seedColor;
-            lightColorScheme = ColorScheme.fromSeed(
-              seedColor: seedColor,
-              brightness: Brightness.light,
-            );
-            darkColorScheme = ColorScheme.fromSeed(
-              seedColor: seedColor,
-              brightness: Brightness.dark,
-            );
-          }
+            if (_useDynamicColors &&
+                lightDynamic != null &&
+                darkDynamic != null) {
+              // Если динамические цвета включены и доступны, используем их
+              lightColorScheme = lightDynamic;
+              darkColorScheme = darkDynamic;
+            } else {
+              // Используем настройки персонализации или стандартную схему
+              final seedColor =
+                  ThemePresets.getColor(settings.themePreset) ??
+                  settings.seedColor;
+              lightColorScheme = ColorScheme.fromSeed(
+                seedColor: seedColor,
+                brightness: Brightness.light,
+              );
+              darkColorScheme = ColorScheme.fromSeed(
+                seedColor: seedColor,
+                brightness: Brightness.dark,
+              );
+            }
 
-          return MaterialApp(
-            navigatorKey: navigatorKey,
-            title: 'Мобильное приложение',
-            theme: ThemeData(
-              colorScheme: lightColorScheme,
-              useMaterial3: true,
-              pageTransitionsTheme: const PageTransitionsTheme(
-                builders: {
-                  TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
-                  TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
-                  TargetPlatform.linux: FadeUpwardsPageTransitionsBuilder(),
-                  TargetPlatform.macOS: FadeUpwardsPageTransitionsBuilder(),
-                  TargetPlatform.windows: FadeUpwardsPageTransitionsBuilder(),
-                },
+            return MaterialApp(
+              navigatorKey: navigatorKey,
+              title: 'Мобильное приложение',
+              theme: ThemeData(
+                colorScheme: lightColorScheme,
+                useMaterial3: true,
+                pageTransitionsTheme: const PageTransitionsTheme(
+                  builders: {
+                    TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
+                    TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+                    TargetPlatform.linux: FadeUpwardsPageTransitionsBuilder(),
+                    TargetPlatform.macOS: FadeUpwardsPageTransitionsBuilder(),
+                    TargetPlatform.windows: FadeUpwardsPageTransitionsBuilder(),
+                  },
+                ),
               ),
-            ),
-            darkTheme: ThemeData(
-              colorScheme: darkColorScheme,
-              useMaterial3: true,
-              pageTransitionsTheme: const PageTransitionsTheme(
-                builders: {
-                  TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
-                  TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
-                  TargetPlatform.linux: FadeUpwardsPageTransitionsBuilder(),
-                  TargetPlatform.macOS: FadeUpwardsPageTransitionsBuilder(),
-                  TargetPlatform.windows: FadeUpwardsPageTransitionsBuilder(),
-                },
+              darkTheme: ThemeData(
+                colorScheme: darkColorScheme,
+                useMaterial3: true,
+                pageTransitionsTheme: const PageTransitionsTheme(
+                  builders: {
+                    TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
+                    TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+                    TargetPlatform.linux: FadeUpwardsPageTransitionsBuilder(),
+                    TargetPlatform.macOS: FadeUpwardsPageTransitionsBuilder(),
+                    TargetPlatform.windows: FadeUpwardsPageTransitionsBuilder(),
+                  },
+                ),
               ),
-            ),
-            themeMode: _isDarkMode! ? ThemeMode.dark : ThemeMode.light,
-            localizationsDelegates: const [
-              GlobalMaterialLocalizations.delegate,
-              GlobalWidgetsLocalizations.delegate,
-              GlobalCupertinoLocalizations.delegate,
-            ],
-            supportedLocales: const [
-              Locale('ru', 'RU'),
-            ],
-            home: _isWidgetConfiguration
-                ? const WidgetSettingsScreen(isConfiguration: true)
-                : const MyHomePage(),
-          );
-        });
+              themeMode: _isDarkMode! ? ThemeMode.dark : ThemeMode.light,
+              localizationsDelegates: const [
+                GlobalMaterialLocalizations.delegate,
+                GlobalWidgetsLocalizations.delegate,
+                GlobalCupertinoLocalizations.delegate,
+              ],
+              supportedLocales: const [Locale('ru', 'RU')],
+              home: _isWidgetConfiguration
+                  ? const WidgetSettingsScreen(isConfiguration: true)
+                  : const MyHomePage(),
+            );
+          },
+        );
       },
     );
   }
@@ -406,8 +414,10 @@ class MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> _loadData() async {
-    final scheduleProvider =
-        Provider.of<ScheduleProvider>(context, listen: false);
+    final scheduleProvider = Provider.of<ScheduleProvider>(
+      context,
+      listen: false,
+    );
     final notesProvider = Provider.of<NotesProvider>(context, listen: false);
 
     await scheduleProvider.loadSchedule();
@@ -416,15 +426,13 @@ class MyHomePageState extends State<MyHomePage> {
 
   // Централизованный метод для обновления списка экранов и пунктов навигации
   void _updateNavigationItems() {
-    _screens = const [
-      ScheduleScreen(),
-      CalendarScreen(),
-      SettingsScreen(),
-    ];
+    _screens = const [ScheduleScreen(), CalendarScreen(), SettingsScreen()];
     _destinations = const [
       NavigationDestination(icon: Icon(Icons.schedule), label: 'Расписание'),
       NavigationDestination(
-          icon: Icon(Icons.calendar_month), label: 'Календарь'),
+        icon: Icon(Icons.calendar_month),
+        label: 'Календарь',
+      ),
       NavigationDestination(icon: Icon(Icons.settings), label: 'Настройки'),
     ];
 
@@ -440,12 +448,14 @@ class MyHomePageState extends State<MyHomePage> {
     // Применяем правильный стиль для системных иконок в зависимости от темы
     final Brightness platformBrightness =
         Theme.of(context).brightness == Brightness.dark
-            ? Brightness.light
-            : Brightness.dark;
-    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
-      statusBarIconBrightness: platformBrightness,
-      systemNavigationBarIconBrightness: platformBrightness,
-    ));
+        ? Brightness.light
+        : Brightness.dark;
+    SystemChrome.setSystemUIOverlayStyle(
+      SystemUiOverlayStyle(
+        statusBarIconBrightness: platformBrightness,
+        systemNavigationBarIconBrightness: platformBrightness,
+      ),
+    );
 
     return Theme(
       data: Theme.of(context).copyWith(
@@ -455,12 +465,11 @@ class MyHomePageState extends State<MyHomePage> {
           ),
           backgroundColor: Theme.of(context).colorScheme.surfaceContainerHigh,
           titleTextStyle: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.bold,
-                color: Theme.of(context).colorScheme.onSurface,
-              ),
-          contentTextStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+            fontWeight: FontWeight.bold,
+            color: Theme.of(context).colorScheme.onSurface,
+          ),
+          contentTextStyle: Theme.of(context).textTheme.bodyMedium
+              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
       ),
       child: UpgradeAlert(
@@ -474,10 +483,7 @@ class MyHomePageState extends State<MyHomePage> {
         showIgnore: false,
         showLater: true,
         child: Scaffold(
-          body: IndexedStack(
-            index: _selectedIndex,
-            children: _screens,
-          ),
+          body: IndexedStack(index: _selectedIndex, children: _screens),
           bottomNavigationBar: NavigationBar(
             selectedIndex: _selectedIndex,
             animationDuration: const Duration(milliseconds: 200),

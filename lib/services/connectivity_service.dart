@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter/material.dart';
+
 import '../widgets/error_snackbar.dart';
 import '../providers/schedule_provider.dart';
 import '../services/notification_service.dart';
+
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/timezone.dart' as tz;
 
@@ -22,17 +26,39 @@ class ConnectivityService {
   ConnectivityService._internal();
 
   final _connectivity = Connectivity();
-  late Box<String> _cache;
+
+  // Box может быть ещё не открыт (например, при обращении из фонового изолята
+  // до вызова init()). Раньше поле было `late` и обращение к нему до
+  // инициализации роняло приложение с LateInitializationError.
+  Box<String>? _cache;
+
+  // Широковещательный поток состояния сети.
+  // На него подписан ScheduleProvider вместо опроса раз в 5 секунд.
+  final StreamController<bool> _statusController =
+      StreamController<bool>.broadcast();
+
+  /// Поток изменений подключения: true — сеть есть, false — офлайн.
+  Stream<bool> get onStatusChanged => _statusController.stream;
+
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  bool _isInitialized = false;
   bool _lastKnownStatus = true;
   DateTime? _lastSyncTime;
   bool _isSyncing = false;
   ScheduleProvider? _scheduleProvider;
 
   Future<void> init() async {
+    // init() вызывается и из main(), и из фоновой задачи Workmanager.
+    // Повторная подписка приводила бы к дублирующимся синхронизациям.
+    if (_isInitialized) return;
+    _isInitialized = true;
+
     await Hive.initFlutter();
     _cache = await Hive.openBox<String>('schedule_cache');
     _lastKnownStatus = await isOnline();
-    _connectivity.onConnectivityChanged.listen(_handleConnectivityChange);
+    _connectivitySubscription = _connectivity.onConnectivityChanged.listen(
+      _handleConnectivityChange,
+    );
 
     // Загружаем время последней синхронизации
     final prefs = await SharedPreferences.getInstance();
@@ -48,6 +74,10 @@ class ConnectivityService {
 
     if (isOnlineNow != _lastKnownStatus) {
       _lastKnownStatus = isOnlineNow;
+
+      if (!_statusController.isClosed) {
+        _statusController.add(isOnlineNow);
+      }
 
       if (isOnlineNow) {
         _hasShownOfflineWarning = false;
@@ -108,12 +138,14 @@ class ConnectivityService {
         syncIntervalMinutes = 15; // 15 минут в рабочее время
       }
 
-      final shouldSync = _lastSyncTime == null ||
+      final shouldSync =
+          _lastSyncTime == null ||
           now.difference(_lastSyncTime!).inMinutes >= syncIntervalMinutes;
 
       if (shouldSync) {
         debugPrint(
-            '🔄 Начинаем фоновую синхронизацию (интервал: $syncIntervalMinutes мин)...');
+          '🔄 Начинаем фоновую синхронизацию (интервал: $syncIntervalMinutes мин)...',
+        );
         final provider = _scheduleProvider ?? ScheduleProvider();
 
         // Обновляем расписание и получаем информацию об изменениях
@@ -122,8 +154,9 @@ class ConnectivityService {
         // Отправляем уведомление при обнаружении изменений
         if (diffResult != null && diffResult.hasChanges) {
           debugPrint('📢 Обнаружены изменения: ${diffResult.summary}');
-          await NotificationService()
-              .showScheduleUpdateNotification(diffResult);
+          await NotificationService().showScheduleUpdateNotification(
+            diffResult,
+          );
         }
 
         _lastSyncTime = now;
@@ -180,18 +213,26 @@ class ConnectivityService {
 
   // Сохраняет данные в кэш
   Future<void> cacheData(String key, String data) async {
-    await _cache.put(key, data);
+    await _cache?.put(key, data);
   }
 
   // Берет данные из кэша
   String? getCachedData(String key) {
-    return _cache.get(key);
+    return _cache?.get(key);
   }
 
   Future<void> clearCache() async {
-    await _cache.clear();
+    await _cache?.clear();
   }
 
   Stream<List<ConnectivityResult>> get onConnectivityChanged =>
       _connectivity.onConnectivityChanged;
+
+  /// Освобождает ресурсы. Используется в тестах и при завершении изолята.
+  Future<void> dispose() async {
+    await _connectivitySubscription?.cancel();
+    _connectivitySubscription = null;
+    await _statusController.close();
+    _isInitialized = false;
+  }
 }

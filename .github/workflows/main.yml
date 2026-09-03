@@ -17,7 +17,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.0'
+          flutter-version: '3.47.2'
           channel: 'stable'
 
       - name: Get dependencies
@@ -32,10 +32,14 @@ jobs:
       - name: Run tests
         run: flutter test --no-pub
 
+      # Сборка требует секретов, которых нет в репозитории:
+      # android/app/google-services.json (плагин google-services) и
+      # android/key.properties (подпись release). Поэтому шаги сборки
+      # не блокируют проверку — форматирование, анализ и тесты блокируют.
       - name: Build APK (Debug)
         run: flutter build apk --debug
         continue-on-error: true
 
-      - name: Build APK (Release)
-        run: flutter build apk --release
+      - name: Build App Bundle (Release)
+        run: flutter build appbundle --release
         continue-on-error: true

@@ -34,6 +34,35 @@ class DateService {
     '09': 9, '10': 10, '11': 11, '12': 12,
   };
 
+  /// Канонические трёхбуквенные сокращения месяцев.
+  ///
+  /// Нужны для запасного разбора по префиксу: сайт колледжа и старые записи
+  /// в базе встречаются в разных сокращениях — "сен", "сент", "сент.",
+  /// "февр". Точный поиск по _monthMap на "сент" не срабатывал, и такие
+  /// дни выпадали из расписания с ошибкой "Неизвестный месяц".
+  /// Префиксы различимы между собой, поэтому неоднозначности нет.
+  static const Map<String, int> _monthPrefixes = {
+    'янв': 1,
+    'фев': 2,
+    'мар': 3,
+    'апр': 4,
+    'май': 5,
+    'июн': 6,
+    'июл': 7,
+    'авг': 8,
+    'сен': 9,
+    'окт': 10,
+    'ноя': 11,
+    'дек': 12,
+  };
+
+  static int? _monthByPrefix(String value) {
+    for (final entry in _monthPrefixes.entries) {
+      if (value.startsWith(entry.key)) return entry.value;
+    }
+    return null;
+  }
+
   static const Map<int, String> _monthNames = {
     1: 'января',
     2: 'февраля',
@@ -84,13 +113,14 @@ class DateService {
       final parts = dateStr.split('-');
       if (parts.length != 2) {
         throw FormatException(
-            'Неверный формат даты: $dateStr. Ожидается формат "dd.MM.yyyy" или "день-месяц"');
+          'Неверный формат даты: $dateStr. Ожидается формат "dd.MM.yyyy" или "день-месяц"',
+        );
       }
 
       final day = int.parse(parts[0]);
       final monthStr = parts[1].toLowerCase().trim().replaceAll('.', '');
 
-      final month = _monthMap[monthStr];
+      final month = _monthMap[monthStr] ?? _monthByPrefix(monthStr);
       if (month == null) {
         throw FormatException('Неизвестный месяц: $monthStr');
       }
@@ -134,7 +164,7 @@ class DateService {
       'четверг',
       'пятница',
       'суббота',
-      'воскресенье'
+      'воскресенье',
     ];
     final weekday = weekdays[date.weekday - 1];
     return '${date.day} $monthName ($weekday)';
@@ -213,7 +243,8 @@ class DateService {
     } catch (e) {
       // Если дата не парсится, удаляем её
       debugPrint(
-          '❌ Некорректная дата в архиве: $dateStr, рекомендуется удалить');
+        '❌ Некорректная дата в архиве: $dateStr, рекомендуется удалить',
+      );
       return true;
     }
   }
@@ -251,6 +282,36 @@ class DateService {
     } catch (e) {
       return dateStr;
     }
+  }
+
+  /// Сортирует ключи-даты расписания хронологически.
+  ///
+  /// Ключи хранятся строками "dd.MM.yyyy", и обычный `list.sort()` сортирует
+  /// их как текст: "01.10.2026" оказывается раньше "02.09.2026".
+  /// Порядок дней в БД (rowid) тоже не гарантирован, поэтому опираться
+  /// на порядок `Map.keys` нельзя.
+  static List<String> sortDateKeys(Iterable<String> dates) {
+    final parsed = <String, DateTime?>{};
+    for (final date in dates) {
+      if (parsed.containsKey(date)) continue;
+      try {
+        parsed[date] = parseScheduleDate(date);
+      } catch (_) {
+        parsed[date] = null;
+      }
+    }
+
+    final result = parsed.keys.toList();
+    result.sort((a, b) {
+      final da = parsed[a];
+      final db = parsed[b];
+      // Нераспознанные даты уходят в конец, но список не теряет элементы.
+      if (da == null && db == null) return a.compareTo(b);
+      if (da == null) return 1;
+      if (db == null) return -1;
+      return da.compareTo(db);
+    });
+    return result;
   }
 
   /// Проверяет, совпадают ли два дня

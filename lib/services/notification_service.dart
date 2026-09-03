@@ -1,6 +1,8 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/material.dart';
+
 import 'dart:io';
+
 import '../models/schedule_change.dart';
 
 /// Сервис для управления локальными уведомлениями
@@ -18,7 +20,9 @@ class NotificationService {
     if (_initialized) return;
 
     // Настройки для Android
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const androidSettings = AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
 
     // Настройки для iOS
     const iosSettings = DarwinInitializationSettings(
@@ -33,7 +37,7 @@ class NotificationService {
     );
 
     await _notifications.initialize(
-      initSettings,
+      settings: initSettings,
       onDidReceiveNotificationResponse: _onNotificationTapped,
     );
 
@@ -63,7 +67,8 @@ class NotificationService {
 
     await _notifications
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
+          AndroidFlutterLocalNotificationsPlugin
+        >()
         ?.createNotificationChannel(scheduleChannel);
   }
 
@@ -71,11 +76,22 @@ class NotificationService {
   Future<void> _requestPermissions() async {
     final androidImplementation = _notifications
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
+          AndroidFlutterLocalNotificationsPlugin
+        >();
 
     if (androidImplementation != null) {
       await androidImplementation.requestNotificationsPermission();
     }
+  }
+
+  /// Идентификатор уведомления.
+  ///
+  /// Раньше использовался `millisecondsSinceEpoch % 100000` — два уведомления
+  /// в пределах одной секунды могли получить один id, и второе затирало первое.
+  int _notificationCounter = 0;
+  int _nextNotificationId() {
+    _notificationCounter = (_notificationCounter + 1) % 100000;
+    return _notificationCounter;
   }
 
   /// Обработчик нажатия на уведомление
@@ -92,7 +108,7 @@ class NotificationService {
 
     if (!diff.hasChanges) return;
 
-    final title = 'Обновление расписания';
+    const title = 'Обновление расписания';
     final body = diff.summary;
 
     const androidDetails = AndroidNotificationDetails(
@@ -118,10 +134,10 @@ class NotificationService {
     );
 
     await _notifications.show(
-      DateTime.now().millisecondsSinceEpoch % 100000,
-      title,
-      body,
-      details,
+      id: _nextNotificationId(),
+      title: title,
+      body: body,
+      notificationDetails: details,
       payload: 'schedule_update',
     );
   }
@@ -155,10 +171,10 @@ class NotificationService {
     );
 
     await _notifications.show(
-      DateTime.now().millisecondsSinceEpoch % 100000,
-      'Расписание обновлено',
-      message,
-      details,
+      id: _nextNotificationId(),
+      title: 'Расписание обновлено',
+      body: message,
+      notificationDetails: details,
       payload: 'schedule_update',
     );
   }
@@ -173,7 +189,8 @@ class NotificationService {
     if (Platform.isAndroid) {
       final androidImplementation = _notifications
           .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>();
+            AndroidFlutterLocalNotificationsPlugin
+          >();
       if (androidImplementation != null) {
         return await androidImplementation.areNotificationsEnabled() ?? false;
       }
@@ -181,4 +198,3 @@ class NotificationService {
     return true; // Для iOS предполагаем, что разрешено
   }
 }
-

@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+
 import '../models/note_model.dart';
 import '../services/database_service.dart';
 
@@ -24,22 +25,24 @@ class NotesProvider extends ChangeNotifier {
     return _notes[dateStr];
   }
 
-  // Сохраняет новую заметку
+  // Сохраняет новую заметку.
+  // Дата нормализуется до дня, чтобы ключ в памяти и запись в базе совпадали.
   Future<void> saveNote(Note note) async {
-    final dateStr = note.date.toIso8601String().split('T')[0];
-    _notes[dateStr] = note;
-    await _db.saveNote(note);
+    final day = DateTime(note.date.year, note.date.month, note.date.day);
+    final normalized = Note(date: day, text: note.text);
+
+    _notes[day.toIso8601String().split('T')[0]] = normalized;
+    await _db.saveNote(normalized);
     notifyListeners();
   }
 
   // Загружает все заметки из базы
   Future<void> loadNotes() async {
     if (_isLoaded) return; // Загружаем только один раз
-    
+
     final notes = await _db.getNotes();
     _notes = {
-      for (var note in notes)
-        note.date.toIso8601String().split('T')[0]: note
+      for (var note in notes) note.date.toIso8601String().split('T')[0]: note,
     };
     _isLoaded = true;
     notifyListeners();
@@ -52,4 +55,4 @@ class NotesProvider extends ChangeNotifier {
     await _db.deleteNote(date);
     notifyListeners();
   }
-} 
+}

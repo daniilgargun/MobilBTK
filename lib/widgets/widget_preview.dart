@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+
+import '../models/lesson_time_model.dart';
 import '../providers/personalization_provider.dart';
 
 class WidgetPreview extends StatefulWidget {
@@ -55,8 +57,9 @@ class _WidgetPreviewState extends State<WidgetPreview> {
     // Calculate background color with transparency
     final baseColor = widget.isDark ? Colors.black : Colors.white;
     final opacity = (100 - widget.transparency) / 100.0;
-    final backgroundColor =
-        baseColor.withValues(alpha: opacity.clamp(0.0, 1.0));
+    final backgroundColor = baseColor.withValues(
+      alpha: opacity.clamp(0.0, 1.0),
+    );
 
     final textColor = widget.isDark ? Colors.white : Colors.black;
     final secondaryTextColor = widget.isDark ? Colors.white70 : Colors.black54;
@@ -79,7 +82,9 @@ class _WidgetPreviewState extends State<WidgetPreview> {
                     image: MemoryImage(_wallpaperBytes!),
                     fit: BoxFit.cover,
                     colorFilter: ColorFilter.mode(
-                        Colors.black.withValues(alpha: 0.2), BlendMode.darken),
+                      Colors.black.withValues(alpha: 0.2),
+                      BlendMode.darken,
+                    ),
                   )
                 : null,
             gradient: _wallpaperBytes == null
@@ -111,7 +116,7 @@ class _WidgetPreviewState extends State<WidgetPreview> {
                             const SizedBox(height: 8),
                             _buildLessonItem(
                               '1. Веб прогр на стороне сервера',
-                              '08:30 - 10:05',
+                              LessonTime.getTimeRangeString(1, 'normal'),
                               'О47',
                               textColor,
                               secondaryTextColor,
@@ -120,7 +125,7 @@ class _WidgetPreviewState extends State<WidgetPreview> {
                             ),
                             _buildLessonItem(
                               '2. Компьютерные сети',
-                              '10:15 - 11:50',
+                              LessonTime.getTimeRangeString(2, 'normal'),
                               'О47',
                               textColor,
                               secondaryTextColor,
@@ -129,7 +134,7 @@ class _WidgetPreviewState extends State<WidgetPreview> {
                             ),
                             _buildLessonItem(
                               '3. Физкультура',
-                              '12:10 - 13:45',
+                              LessonTime.getTimeRangeString(3, 'normal'),
                               'Спортзал',
                               textColor,
                               secondaryTextColor,
@@ -157,23 +162,37 @@ class _WidgetPreviewState extends State<WidgetPreview> {
                               crossAxisSpacing: 4,
                               children: [
                                 _buildBellItem(
-                                    '1 пара',
-                                    '08:30 - 09:15',
-                                    textColor,
-                                    secondaryTextColor,
-                                    false,
-                                    widgetColor),
-                                _buildBellItem('', '09:20 - 10:05', textColor,
-                                    secondaryTextColor, false, widgetColor),
+                                  '1 пара',
+                                  _halfRange(1, true),
+                                  textColor,
+                                  secondaryTextColor,
+                                  false,
+                                  widgetColor,
+                                ),
                                 _buildBellItem(
-                                    '2 пара',
-                                    '10:15 - 11:00',
-                                    textColor,
-                                    secondaryTextColor,
-                                    true,
-                                    widgetColor),
-                                _buildBellItem('', '11:05 - 11:50', textColor,
-                                    secondaryTextColor, true, widgetColor),
+                                  '',
+                                  _halfRange(1, false),
+                                  textColor,
+                                  secondaryTextColor,
+                                  false,
+                                  widgetColor,
+                                ),
+                                _buildBellItem(
+                                  '2 пара',
+                                  _halfRange(2, true),
+                                  textColor,
+                                  secondaryTextColor,
+                                  true,
+                                  widgetColor,
+                                ),
+                                _buildBellItem(
+                                  '',
+                                  _halfRange(2, false),
+                                  textColor,
+                                  secondaryTextColor,
+                                  true,
+                                  widgetColor,
+                                ),
                               ],
                             ),
                           ],
@@ -187,8 +206,22 @@ class _WidgetPreviewState extends State<WidgetPreview> {
     );
   }
 
-  Widget _buildWidgetContainer(
-      {required Color backgroundColor, required Widget child}) {
+  /// Время одной половины пары из [LessonTime] — чтобы предпросмотр
+  /// показывал настоящее расписание звонков, а не выдуманное.
+  String _halfRange(int lessonNumber, bool firstHalf) {
+    final times = LessonTime.getTimesForLesson(lessonNumber, 'normal');
+    for (final time in times) {
+      if (time.isFirstHalf == firstHalf) {
+        return '${time.start} - ${time.end}';
+      }
+    }
+    return '';
+  }
+
+  Widget _buildWidgetContainer({
+    required Color backgroundColor,
+    required Widget child,
+  }) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -218,13 +251,7 @@ class _WidgetPreviewState extends State<WidgetPreview> {
             fontSize: 14,
           ),
         ),
-        Text(
-          subtitle,
-          style: TextStyle(
-            color: textColor,
-            fontSize: 12,
-          ),
-        ),
+        Text(subtitle, style: TextStyle(color: textColor, fontSize: 12)),
       ],
     );
   }

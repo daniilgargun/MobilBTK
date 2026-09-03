@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../models/lesson_time_model.dart';
 
 class BellScheduleDialog extends StatelessWidget {
@@ -45,16 +46,8 @@ class BellScheduleDialog extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      time1,
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
-                    ),
-                    Text(
-                      time2,
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
-                    ),
+                    Text(time1, overflow: TextOverflow.ellipsis, maxLines: 1),
+                    Text(time2, overflow: TextOverflow.ellipsis, maxLines: 1),
                   ],
                 ),
               ),
@@ -68,15 +61,10 @@ class BellScheduleDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: Container(
         width: MediaQuery.of(context).size.width * 0.95,
-        constraints: const BoxConstraints(
-          maxWidth: 400,
-          maxHeight: 600,
-        ),
+        constraints: const BoxConstraints(maxWidth: 400, maxHeight: 600),
         child: SingleChildScrollView(
           child: Padding(
             padding: const EdgeInsets.all(16.0),
@@ -86,8 +74,10 @@ class BellScheduleDialog extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Icon(Icons.schedule,
-                        color: Theme.of(context).colorScheme.primary),
+                    Icon(
+                      Icons.schedule,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -136,8 +126,11 @@ class BellScheduleDialog extends StatelessWidget {
   }
 
   Widget _buildDaySchedule(
-      BuildContext context, String title, List<(String, String, String)> times,
-      {Map<String, String>? specialHour}) {
+    BuildContext context,
+    String title,
+    List<(String, String, String)> times, {
+    Map<String, String>? specialHour,
+  }) {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -157,9 +150,9 @@ class BellScheduleDialog extends StatelessWidget {
             title,
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: colorScheme.primary,
-                ),
+              fontWeight: FontWeight.bold,
+              color: colorScheme.primary,
+            ),
           ),
         ),
         const SizedBox(height: 5),
@@ -196,9 +189,12 @@ class BellScheduleDialog extends StatelessWidget {
             margin: const EdgeInsets.only(top: 8),
             padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
             decoration: BoxDecoration(
-                            color: (isDark 
-                                ? colorScheme.primaryContainer.withAlpha((0.2 * 255).toInt())
-                                : colorScheme.primaryContainer.withAlpha((0.3 * 255).toInt())),              borderRadius: BorderRadius.circular(8),
+              color: (isDark
+                  ? colorScheme.primaryContainer.withAlpha((0.2 * 255).toInt())
+                  : colorScheme.primaryContainer.withAlpha(
+                      (0.3 * 255).toInt(),
+                    )),
+              borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
               "${specialHour['name']}: ${specialHour['time']}",

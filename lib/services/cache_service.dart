@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+
 import '../models/schedule_model.dart';
 
 /// Оптимизированный сервис кэширования для календаря
@@ -142,7 +143,8 @@ class CacheService {
     }
 
     debugPrint(
-        '🧹 Очищено ${entriesToRemove.length} старых записей из кэша календаря');
+      '🧹 Очищено ${entriesToRemove.length} старых записей из кэша календаря',
+    );
   }
 
   /// Очищает старые записи из кэша расписания
@@ -177,7 +179,8 @@ class CacheService {
       'calendar_events': _calendarEventsCache.length,
       'prepared_schedule': _preparedScheduleCache.length,
       'filtered_data': _filteredCache.length,
-      'total_entries': _calendarEventsCache.length +
+      'total_entries':
+          _calendarEventsCache.length +
           _preparedScheduleCache.length +
           _filteredCache.length,
     };

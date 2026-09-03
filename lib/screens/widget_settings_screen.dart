@@ -7,10 +7,7 @@ import '../widgets/widget_preview.dart';
 class WidgetSettingsScreen extends StatefulWidget {
   final bool isConfiguration;
 
-  const WidgetSettingsScreen({
-    super.key,
-    this.isConfiguration = false,
-  });
+  const WidgetSettingsScreen({super.key, this.isConfiguration = false});
 
   @override
   State<WidgetSettingsScreen> createState() => _WidgetSettingsScreenState();
@@ -52,6 +49,18 @@ class _WidgetSettingsScreenState extends State<WidgetSettingsScreen> {
         await platform.invokeMethod('finishConfigure');
       } on PlatformException catch (e) {
         debugPrint("Failed to finish configuration: '${e.message}'.");
+        // Раньше при ошибке флаг загрузки не сбрасывался и экран навсегда
+        // оставался с крутящимся индикатором без единой кнопки.
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Не удалось завершить настройку виджета'),
+            ),
+          );
+        }
       }
     } else {
       if (mounted) {
@@ -135,7 +144,8 @@ class _WidgetSettingsScreenState extends State<WidgetSettingsScreen> {
                           SwitchListTile(
                             title: const Text('Тёмная тема виджета'),
                             subtitle: const Text(
-                                'Использовать тёмный фон для виджета'),
+                              'Использовать тёмный фон для виджета',
+                            ),
                             value: _isDark,
                             onChanged: (value) {
                               setState(() {
@@ -160,13 +170,15 @@ class _WidgetSettingsScreenState extends State<WidgetSettingsScreen> {
                                   children: [
                                     Text(
                                       'Прозрачность фона',
-                                      style:
-                                          Theme.of(context).textTheme.bodyLarge,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyLarge,
                                     ),
                                     Text(
                                       '${_transparency.round()}%',
-                                      style:
-                                          Theme.of(context).textTheme.bodySmall,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall,
                                     ),
                                   ],
                                 ),
@@ -194,18 +206,22 @@ class _WidgetSettingsScreenState extends State<WidgetSettingsScreen> {
                   // Save Button
                   FilledButton.icon(
                     onPressed: _saveSettings,
-                    icon:
-                        Icon(widget.isConfiguration ? Icons.check : Icons.save),
-                    label: Text(widget.isConfiguration
-                        ? 'Добавить виджет'
-                        : 'Сохранить настройки'),
+                    icon: Icon(
+                      widget.isConfiguration ? Icons.check : Icons.save,
+                    ),
+                    label: Text(
+                      widget.isConfiguration
+                          ? 'Добавить виджет'
+                          : 'Сохранить настройки',
+                    ),
                     style: FilledButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       textStyle: const TextStyle(fontSize: 16),
                     ),
                   ),
                   const SizedBox(
-                      height: 50), // Extra padding for bottom navigation
+                    height: 50,
+                  ), // Extra padding for bottom navigation
                 ],
               ),
             ),
