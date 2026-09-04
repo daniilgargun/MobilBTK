@@ -52,7 +52,6 @@ dependencies:
   dynamic_color: ^1.9.0 # 2.x мигрировал на пакет material_ui, несовместимый с Material из Flutter SDK
   workmanager: ^0.10.9
   flutter_local_notifications: ^22.3.0
-  upgrader: ^13.7.0
   home_widget: ^0.9.4
   firebase_core: ^4.2.1
   firebase_analytics: ^12.0.4

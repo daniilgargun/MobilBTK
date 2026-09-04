@@ -45,11 +45,13 @@ import 'services/crash_reporter.dart';
 import 'services/database_service.dart';
 import 'services/notification_service.dart';
 import 'services/remote_config_service.dart';
+import 'services/lesson_reminder_service.dart';
+import 'services/update_service.dart';
+import 'services/user_profile_service.dart';
 import 'models/lesson_time_model.dart';
 import 'themes/theme_presets.dart';
 
 import 'package:workmanager/workmanager.dart';
-import 'package:upgrader/upgrader.dart';
 
 import 'services/home_widget_service.dart';
 
@@ -137,6 +139,12 @@ void main() {
 
       // Инициализация сервиса уведомлений
       await NotificationService().initialize();
+
+      // Профиль (своя группа или своя фамилия) и напоминания о парах.
+      // Профиль нужен раньше расписания: по нему фильтруются уведомления.
+      await UserProfileService().load();
+      await LessonReminderService().load();
+      await LessonReminderService().createChannel();
 
       // Инициализация базы данных
       await DatabaseService().database;
@@ -234,6 +242,8 @@ void callbackDispatcher() {
         // SharedPreferences при последнем обновлении из приложения.
         final config = await RemoteConfigService().load();
         LessonTime.applyRemoteOverride(config.bellScheduleJson);
+        await UserProfileService().load();
+        await LessonReminderService().load();
 
         await ConnectivityService.performPeriodicSync();
         return true;
@@ -469,6 +479,18 @@ class MyHomePageState extends State<MyHomePage> {
 
     await scheduleProvider.loadSchedule();
     await notesProvider.loadNotes();
+
+    // Напоминания переставляем и при обычном запуске: расписание могло
+    // обновиться фоновой задачей, пока приложение было закрыто.
+    unawaited(
+      LessonReminderService().reschedule(scheduleProvider.scheduleData),
+    );
+
+    // Конфиг обновляется в фоне, поэтому проверку версии делаем после
+    // загрузки расписания — к этому моменту свежие значения уже пришли.
+    if (mounted) {
+      unawaited(_checkForUpdate());
+    }
   }
 
   // Централизованный метод для обновления списка экранов и пунктов навигации
@@ -519,34 +541,94 @@ class MyHomePageState extends State<MyHomePage> {
               ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
       ),
-      child: UpgradeAlert(
-        upgrader: Upgrader(
-          languageCode: 'ru',
-          countryCode: 'RU',
-          durationUntilAlertAgain: Duration.zero,
-          debugLogging: kDebugMode,
-        ),
-        showReleaseNotes: true,
-        showIgnore: false,
-        showLater: true,
-        child: Scaffold(
-          body: IndexedStack(index: _selectedIndex, children: _screens),
-          bottomNavigationBar: NavigationBar(
-            selectedIndex: _selectedIndex,
-            animationDuration: const Duration(milliseconds: 200),
-            onDestinationSelected: (index) {
-              // Haptic feedback на Android
-              if (Theme.of(context).platform == TargetPlatform.android) {
-                HapticFeedback.selectionClick();
-              }
-              setState(() {
-                _selectedIndex = index;
-              });
-            },
-            destinations: _destinations,
-          ),
+      child: Scaffold(
+        body: IndexedStack(index: _selectedIndex, children: _screens),
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: _selectedIndex,
+          animationDuration: const Duration(milliseconds: 200),
+          onDestinationSelected: (index) {
+            // Haptic feedback на Android
+            if (Theme.of(context).platform == TargetPlatform.android) {
+              HapticFeedback.selectionClick();
+            }
+            setState(() {
+              _selectedIndex = index;
+            });
+          },
+          destinations: _destinations,
         ),
       ),
     );
+  }
+
+  /// Показывает предложение обновиться, если в конфиге объявлена версия
+  /// новее установленной.
+  ///
+  /// Проверка отложена и не блокирует запуск: свежий конфиг приходит уже
+  /// после того, как приложение показало расписание.
+  Future<void> _checkForUpdate() async {
+    final update = await UpdateService.check();
+    if (update == null || !mounted) return;
+
+    final isRequired = update.urgency == UpdateUrgency.required;
+
+    final action = await showDialog<String>(
+      context: context,
+      // Обязательное обновление не закрыть мимо кнопок: на старой версии
+      // приложение показывает неверные данные, а не просто устаревший вид.
+      barrierDismissible: !isRequired,
+      builder: (context) => PopScope(
+        canPop: !isRequired,
+        child: AlertDialog(
+          icon: const Icon(Icons.system_update),
+          title: Text(isRequired ? 'Нужно обновиться' : 'Доступно обновление'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Версия ${update.version} уже в Google Play.'),
+              if (update.notes.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(update.notes),
+              ],
+              if (isRequired) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  'Текущая версия больше не может правильно читать '
+                  'расписание с сайта колледжа.',
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            if (!isRequired)
+              TextButton(
+                onPressed: () => Navigator.pop(context, 'later'),
+                child: const Text('Позже'),
+              ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, 'update'),
+              child: const Text('Обновить'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (action == 'update') {
+      final opened = await UpdateService.openStore();
+      if (!opened && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Не удалось открыть Google Play')),
+        );
+      }
+      return;
+    }
+
+    // Закрытие мимо кнопок тоже считаем «позже»: иначе диалог всплывал бы
+    // при каждом переключении вкладок.
+    if (!isRequired) {
+      await UpdateService.postpone(update.version);
+    }
   }
 }

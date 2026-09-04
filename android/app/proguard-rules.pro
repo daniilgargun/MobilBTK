@@ -42,11 +42,10 @@
 -dontwarn com.android.billingclient.**
 
 # ---------------------------------------------------------------------------
-# Google Play Services / Play Core (используются upgrader и app-update)
+# Play Core: сами библиотеки не подключены, но Flutter ссылается на классы
+# отложенных компонентов. Без -dontwarn R8 падает на недостающих классах.
 # ---------------------------------------------------------------------------
--keep class com.google.android.play.core.** { *; }
 -dontwarn com.google.android.play.core.**
--dontwarn com.google.android.play.core.splitcompat.SplitCompatApplication
 
 # ---------------------------------------------------------------------------
 # Firebase

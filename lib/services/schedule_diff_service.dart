@@ -1,5 +1,6 @@
 import '../models/schedule_model.dart';
 import '../models/schedule_change.dart';
+import 'user_profile_service.dart';
 
 /// Сервис для сравнения двух версий расписания и определения изменений
 class ScheduleDiffService {
@@ -272,6 +273,33 @@ class ScheduleDiffService {
       modifiedCount: modifiedCount,
       newDaysCount: newDaysCount,
     );
+  }
+
+  /// Оставляет в результате только изменения, касающиеся пользователя.
+  ///
+  /// Без этого фильтра студент 396-й группы получал уведомление «изменено
+  /// 12 пар», где ни одна не его: дифф сравнивает расписание всего колледжа.
+  ///
+  /// Профиль не выбран — возвращаем всё как есть: лучше лишнее уведомление,
+  /// чем молчание у того, кто до настроек не дошёл.
+  static ScheduleDiffResult forProfile(
+    ScheduleDiffResult diff,
+    UserProfile? profile,
+  ) {
+    if (profile == null) return diff;
+    return diff.where((change) => _belongsTo(change, profile));
+  }
+
+  static bool _belongsTo(ScheduleChange change, UserProfile profile) {
+    if (profile.role == ProfileRole.student) {
+      // Ключ группы надёжнее поля внутри занятия: у удалённого дня
+      // элементы берутся из старого снимка, и группа там та же.
+      return change.group.trim().toLowerCase() ==
+          profile.value.trim().toLowerCase();
+    }
+
+    final item = change.newItem ?? change.oldItem;
+    return item != null && profile.matches(item);
   }
 
   /// Ключ «места» занятия в дне: номер пары и подгруппа.

@@ -32,9 +32,6 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
 
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17.toString()
-    }
 
     defaultConfig {
         applicationId = "com.gargun.btktimetable"
@@ -98,19 +95,24 @@ android {
     }
 }
 
+// Kotlin 2.3: kotlinOptions { jvmTarget } удалён из публичного DSL.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
 flutter {
     source = "../.."
 }
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
-    // Используем новые библиотеки вместо устаревшей Play Core
-    implementation("com.google.android.play:app-update:2.1.0")
-    implementation("com.google.android.play:app-update-ktx:2.1.0")
-    implementation("com.google.android.play:asset-delivery:2.2.2")
-    implementation("com.google.android.play:asset-delivery-ktx:2.2.2")
-    implementation("com.google.android.play:review:2.0.2")
-    implementation("com.google.android.play:review-ktx:2.0.2")
+
+    // Библиотеки com.google.android.play (app-update, asset-delivery, review)
+    // отсюда убраны: их не вызывает ни Kotlin-код приложения, ни один из
+    // плагинов. Они появились как замена устаревшей Play Core, но остались
+    // неиспользованными и просто ехали в каждой сборке.
 
     // Яндекс.Ads отдельно не подключаем: плагин yandex_mobileads объявляет
     // com.yandex.android:mobileads своей версии сам. Прибитая здесь 7.12.0

@@ -7,6 +7,9 @@ import 'package:flutter/material.dart';
 import '../widgets/error_snackbar.dart';
 import '../providers/schedule_provider.dart';
 import '../services/notification_service.dart';
+import 'lesson_reminder_service.dart';
+import 'schedule_diff_service.dart';
+import 'user_profile_service.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/timezone.dart' as tz;
@@ -151,13 +154,28 @@ class ConnectivityService {
         // Обновляем расписание и получаем информацию об изменениях
         final diffResult = await provider.updateSchedule(silent: true);
 
-        // Отправляем уведомление при обнаружении изменений
+        // Уведомляем только о том, что касается пользователя.
+        //
+        // Дифф сравнивает расписание всего колледжа, поэтому без фильтра
+        // студенту приходило «изменено 12 пар», где ни одна не его.
+        // Профиль читаем из хранилища: здесь может быть изолят фоновой
+        // задачи, где состояния приложения нет.
         if (diffResult != null && diffResult.hasChanges) {
-          debugPrint('📢 Обнаружены изменения: ${diffResult.summary}');
-          await NotificationService().showScheduleUpdateNotification(
-            diffResult,
-          );
+          final profile = await UserProfileService().load();
+          final personal = ScheduleDiffService.forProfile(diffResult, profile);
+
+          if (personal.hasChanges) {
+            debugPrint('📢 Обнаружены изменения: ${personal.summary}');
+            await NotificationService().showScheduleUpdateNotification(
+              personal,
+            );
+          } else {
+            debugPrint('🔕 Изменения есть, но не по профилю пользователя');
+          }
         }
+
+        // Расписание могло сдвинуться — переставляем напоминания о парах.
+        await LessonReminderService().reschedule(provider.scheduleData);
 
         _lastSyncTime = now;
 

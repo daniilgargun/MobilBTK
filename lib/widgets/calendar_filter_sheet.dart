@@ -20,11 +20,14 @@ class CalendarFilterResult {
       teacher = null;
 }
 
-/// Нижний лист выбора фильтра календаря.
+/// Нижний лист выбора группы или преподавателя.
 ///
 /// Раньше это были два диалога подряд: сначала «Фильтр» с тремя пунктами,
-/// затем отдельное окно со списком. Теперь всё в одном листе: кнопка
-/// «Показать всё» сверху и две вкладки со списками и поиском.
+/// затем отдельное окно со списком. Теперь всё в одном листе: кнопка сброса
+/// сверху и две вкладки со списками и поиском.
+///
+/// Тем же листом выбирается профиль в настройках — задача та же (выбрать
+/// свою группу или себя как преподавателя), меняются только подписи.
 Future<CalendarFilterResult?> showCalendarFilterSheet({
   required BuildContext context,
   required List<String> groups,
@@ -32,6 +35,9 @@ Future<CalendarFilterResult?> showCalendarFilterSheet({
   required String selectedFilter,
   String? selectedGroup,
   String? selectedTeacher,
+  String title = 'Фильтр расписания',
+  String resetLabel = 'Показать всё',
+  String resetHint = 'Сейчас показано расписание всех групп',
 }) {
   return showModalBottomSheet<CalendarFilterResult>(
     context: context,
@@ -43,6 +49,9 @@ Future<CalendarFilterResult?> showCalendarFilterSheet({
       selectedFilter: selectedFilter,
       selectedGroup: selectedGroup,
       selectedTeacher: selectedTeacher,
+      title: title,
+      resetLabel: resetLabel,
+      resetHint: resetHint,
     ),
   );
 }
@@ -53,6 +62,9 @@ class _CalendarFilterSheet extends StatefulWidget {
   final String selectedFilter;
   final String? selectedGroup;
   final String? selectedTeacher;
+  final String title;
+  final String resetLabel;
+  final String resetHint;
 
   const _CalendarFilterSheet({
     required this.groups,
@@ -60,6 +72,9 @@ class _CalendarFilterSheet extends StatefulWidget {
     required this.selectedFilter,
     required this.selectedGroup,
     required this.selectedTeacher,
+    required this.title,
+    required this.resetLabel,
+    required this.resetHint,
   });
 
   @override
@@ -109,7 +124,7 @@ class _CalendarFilterSheetState extends State<_CalendarFilterSheet> {
                   children: [
                     Expanded(
                       child: Text(
-                        'Фильтр расписания',
+                        widget.title,
                         style: theme.textTheme.titleMedium,
                       ),
                     ),
@@ -120,7 +135,7 @@ class _CalendarFilterSheetState extends State<_CalendarFilterSheet> {
                           const CalendarFilterResult.all(),
                         ),
                         icon: const Icon(Icons.clear_all, size: 18),
-                        label: const Text('Показать всё'),
+                        label: Text(widget.resetLabel),
                       ),
                   ],
                 ),
@@ -130,7 +145,7 @@ class _CalendarFilterSheetState extends State<_CalendarFilterSheet> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                   child: Text(
-                    'Сейчас показано расписание всех групп',
+                    widget.resetHint,
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),

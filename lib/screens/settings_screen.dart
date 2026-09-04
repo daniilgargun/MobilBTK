@@ -4,7 +4,10 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
 import '../services/database_service.dart';
+import '../services/lesson_reminder_service.dart';
 import '../services/notification_service.dart';
+import '../services/user_profile_service.dart';
+import '../widgets/calendar_filter_sheet.dart';
 import '../providers/personalization_provider.dart';
 import '../providers/schedule_provider.dart';
 
@@ -27,6 +30,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool? _isDarkMode;
   String _appVersion = '';
   bool? _notificationsEnabled;
+  bool? _canScheduleExactly;
   int _storageDays = 30;
   String _lastUpdateInfo = 'Загрузка...';
 
@@ -35,6 +39,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     _loadSettings();
     _loadNotificationsEnabled();
+    _loadExactAlarmState();
     _loadAppVersion();
     _loadLastUpdateInfo();
   }
@@ -144,6 +149,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           // Секция расписания
           _buildScheduleSection(),
+
+          // Секция уведомлений
+          _buildNotificationsSection(),
 
           // Секция управления данными
           _buildSectionHeader('Управление данными'),
@@ -430,6 +438,211 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // Секция уведомлений
+  //
+  // Собрана в одном месте намеренно: профиль, уведомления об изменениях и
+  // напоминания о парах связаны. Без профиля первые приходят про весь
+  // колледж, а вторые не работают вовсе — это и написано в подписях, чтобы
+  // не пришлось догадываться.
+  Widget _buildNotificationsSection() {
+    final theme = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionHeader('Уведомления'),
+
+        ValueListenableBuilder<UserProfile?>(
+          valueListenable: UserProfileService().listenable,
+          builder: (context, profile, _) => ListTile(
+            title: const Text('Я в расписании'),
+            subtitle: Text(
+              profile?.description ??
+                  'Не выбрано — уведомления приходят про весь колледж',
+            ),
+            leading: Icon(
+              profile?.role == ProfileRole.teacher
+                  ? Icons.co_present_outlined
+                  : Icons.person_outline,
+              color: theme.colorScheme.primary,
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _pickProfile,
+          ),
+        ),
+
+        // Уведомления приходят только об изменениях, найденных фоновым
+        // разбором, поэтому ждать их можно долго. Строка ниже позволяет
+        // сразу проверить, что доставка вообще работает.
+        ListTile(
+          title: const Text('Уведомления об изменениях'),
+          subtitle: Text(
+            _notificationsEnabled == null
+                ? 'Проверка…'
+                : _notificationsEnabled!
+                ? 'Включены · нажмите для проверки'
+                : 'Выключены — нажмите, чтобы включить',
+          ),
+          leading: Icon(
+            _notificationsEnabled == false
+                ? Icons.notifications_off_outlined
+                : Icons.notifications_active_outlined,
+            color: theme.colorScheme.primary,
+          ),
+          onTap: _onNotificationsTap,
+        ),
+
+        ValueListenableBuilder<bool>(
+          valueListenable: LessonReminderService().enabledListenable,
+          builder: (context, enabled, _) => SwitchListTile(
+            title: const Text('Напоминать о парах'),
+            subtitle: Text(_reminderSubtitle(enabled)),
+            value: enabled,
+            onChanged: _setRemindersEnabled,
+            secondary: Icon(
+              enabled ? Icons.alarm_on : Icons.alarm_outlined,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+        ),
+
+        ValueListenableBuilder<bool>(
+          valueListenable: LessonReminderService().enabledListenable,
+          builder: (context, enabled, _) {
+            if (!enabled) return const SizedBox.shrink();
+
+            return ValueListenableBuilder<int>(
+              valueListenable: LessonReminderService().minutesListenable,
+              builder: (context, minutes, _) => ListTile(
+                title: const Text('За сколько напоминать'),
+                subtitle: Text('$minutes мин до начала пары'),
+                leading: Icon(
+                  Icons.timer_outlined,
+                  color: theme.colorScheme.primary,
+                ),
+                trailing: PopupMenuButton<int>(
+                  icon: const Icon(Icons.tune),
+                  tooltip: 'Изменить время напоминания',
+                  onSelected: _setReminderMinutes,
+                  itemBuilder: (context) => [
+                    for (final value in LessonReminderService.minuteOptions)
+                      PopupMenuItem(value: value, child: Text('$value мин')),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+
+        const Divider(),
+      ],
+    );
+  }
+
+  String _reminderSubtitle(bool enabled) {
+    if (UserProfileService().profile == null) {
+      return 'Сначала выберите себя в расписании';
+    }
+    if (!enabled) return 'Выключены';
+    return _canScheduleExactly == false
+        ? 'Включены · без разрешения на точное время может опоздать'
+        : 'Включены';
+  }
+
+  /// Выбор профиля тем же листом, что и фильтр календаря: задача та же —
+  /// найти свою группу или себя в списке преподавателей.
+  Future<void> _pickProfile() async {
+    final provider = context.read<ScheduleProvider>();
+    final service = UserProfileService();
+    final current = service.profile;
+
+    final result = await showCalendarFilterSheet(
+      context: context,
+      groups: provider.groups,
+      teachers: provider.teachers,
+      selectedFilter: switch (current?.role) {
+        ProfileRole.student => 'group',
+        ProfileRole.teacher => 'teacher',
+        null => 'all',
+      },
+      selectedGroup: current?.role == ProfileRole.student
+          ? current?.value
+          : null,
+      selectedTeacher: current?.role == ProfileRole.teacher
+          ? current?.value
+          : null,
+      title: 'Кто вы в расписании',
+      resetLabel: 'Не выбирать',
+      resetHint: 'Пока не выбрано: уведомления приходят про весь колледж',
+    );
+
+    if (result == null) return;
+
+    final profile = switch (result.filter) {
+      'group' when result.group != null => UserProfile(
+        role: ProfileRole.student,
+        value: result.group!,
+      ),
+      'teacher' when result.teacher != null => UserProfile(
+        role: ProfileRole.teacher,
+        value: result.teacher!,
+      ),
+      _ => null,
+    };
+
+    await service.save(profile);
+
+    // Напоминания планируются по расписанию профиля — после его смены
+    // старые будильники относятся к чужим парам.
+    await LessonReminderService().reschedule(provider.scheduleData);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _setRemindersEnabled(bool value) async {
+    final reminders = LessonReminderService();
+
+    if (value && UserProfileService().profile == null) {
+      // Без профиля напоминать не о чем: непонятно, чьи пары брать.
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Сначала выберите себя в расписании')),
+      );
+      await _pickProfile();
+      if (UserProfileService().profile == null) return;
+    }
+
+    await reminders.setEnabled(value);
+
+    if (value) {
+      // Точные будильники — отдельное разрешение на Android 12+.
+      // Просим один раз при включении, дальше просто честно пишем в подписи,
+      // что напоминание может опоздать.
+      if (!await reminders.canScheduleExactly()) {
+        await reminders.requestExactPermission();
+      }
+    }
+
+    await _loadExactAlarmState();
+    if (!mounted) return;
+
+    await reminders.reschedule(context.read<ScheduleProvider>().scheduleData);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _setReminderMinutes(int value) async {
+    await LessonReminderService().setMinutesBefore(value);
+    if (!mounted) return;
+    await LessonReminderService().reschedule(
+      context.read<ScheduleProvider>().scheduleData,
+    );
+  }
+
+  Future<void> _loadExactAlarmState() async {
+    final canSchedule = await LessonReminderService().canScheduleExactly();
+    if (!mounted) return;
+    setState(() => _canScheduleExactly = canSchedule);
+  }
+
   // Секция расписания
   Widget _buildScheduleSection() {
     return Column(
@@ -458,26 +671,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const PopupMenuItem(value: 90, child: Text('90 дней')),
             ],
           ),
-        ),
-        // Уведомления приходят только об изменениях, найденных фоновым
-        // разбором, поэтому ждать их можно долго. Строка ниже позволяет
-        // сразу проверить, что доставка вообще работает.
-        ListTile(
-          title: const Text('Уведомления об изменениях'),
-          subtitle: Text(
-            _notificationsEnabled == null
-                ? 'Проверка…'
-                : _notificationsEnabled!
-                ? 'Включены · нажмите для проверки'
-                : 'Выключены — нажмите, чтобы включить',
-          ),
-          leading: Icon(
-            _notificationsEnabled == false
-                ? Icons.notifications_off_outlined
-                : Icons.notifications_active_outlined,
-            color: Theme.of(context).colorScheme.primary,
-          ),
-          onTap: _onNotificationsTap,
         ),
         ListTile(
           title: const Text('Последнее обновление'),

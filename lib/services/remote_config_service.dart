@@ -112,12 +112,28 @@ class AppConfig {
 
   final Announcement announcement;
 
+  /// Последняя версия в Google Play, например `1.0.14`. Пусто — не проверять.
+  ///
+  /// Объявляется здесь, а не вычитывается со страницы Play: Google убрал
+  /// оттуда поле версии, и разбор страницы (пакет `upgrader`) перестал
+  /// работать — см. [UpdateService].
+  final String latestVersion;
+
+  /// Версия, ниже которой приложение просит обновиться настойчиво.
+  final String minSupportedVersion;
+
+  /// Что нового — текст в диалоге обновления.
+  final String updateNotes;
+
   const AppConfig({
     this.scheduleUrl = defaultScheduleUrl,
     this.columns = ParserColumns.defaults,
     this.bellScheduleJson = '',
     this.adsEnabled = true,
     this.announcement = const Announcement(),
+    this.latestVersion = '',
+    this.minSupportedVersion = '',
+    this.updateNotes = '',
   });
 
   static const String defaultScheduleUrl =
@@ -149,6 +165,9 @@ class RemoteConfigService {
   static const String _bellKey = 'rc_bell_schedule';
   static const String _adsKey = 'rc_ads_enabled';
   static const String _announcementKey = 'rc_announcement';
+  static const String _latestVersionKey = 'rc_latest_version';
+  static const String _minVersionKey = 'rc_min_supported_version';
+  static const String _updateNotesKey = 'rc_update_notes';
 
   /// Как часто разрешено ходить на сервер за конфигом.
   ///
@@ -172,6 +191,9 @@ class RemoteConfigService {
         bellScheduleJson: prefs.getString(_bellKey) ?? '',
         adsEnabled: prefs.getBool(_adsKey) ?? true,
         announcement: parseAnnouncement(prefs.getString(_announcementKey)),
+        latestVersion: prefs.getString(_latestVersionKey) ?? '',
+        minSupportedVersion: prefs.getString(_minVersionKey) ?? '',
+        updateNotes: prefs.getString(_updateNotesKey) ?? '',
       );
     } catch (e) {
       debugPrint('⚠️ Не удалось прочитать сохранённый конфиг: $e');
@@ -201,6 +223,9 @@ class RemoteConfigService {
         'bell_schedule': '',
         'ads_enabled': true,
         'announcement': '',
+        'latest_version': '',
+        'min_supported_version': '',
+        'update_notes': '',
       });
 
       await remote.fetchAndActivate();
@@ -211,6 +236,15 @@ class RemoteConfigService {
       await prefs.setString(_bellKey, remote.getString('bell_schedule'));
       await prefs.setBool(_adsKey, remote.getBool('ads_enabled'));
       await prefs.setString(_announcementKey, remote.getString('announcement'));
+      await prefs.setString(
+        _latestVersionKey,
+        remote.getString('latest_version'),
+      );
+      await prefs.setString(
+        _minVersionKey,
+        remote.getString('min_supported_version'),
+      );
+      await prefs.setString(_updateNotesKey, remote.getString('update_notes'));
 
       await load();
       debugPrint('✅ Удалённый конфиг обновлён');

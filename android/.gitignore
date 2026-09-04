@@ -1,5 +1,8 @@
 gradle-wrapper.jar
 /.gradle
+# Gradle 9 кладёт сюда отчёты, несмотря на переопределение buildDirectory
+# в корневом build.gradle.kts.
+/build
 /captures/
 /gradlew
 /gradlew.bat
