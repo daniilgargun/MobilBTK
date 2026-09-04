@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'dart:io' show HandshakeException, SocketException;
 
 import 'package:flutter/foundation.dart';
 import 'package:html/dom.dart';
@@ -25,6 +26,21 @@ class ParseResult {
   /// Страница не изменилась с прошлой загрузки — разбор не выполнялся.
   final bool notModified;
 
+  /// Запрос не дошёл до сайта: нет сети, VPN без канала, captive portal,
+  /// таймаут. Отличается от ошибки, которую вернул сам сайт, — в отчёты о
+  /// сбоях такое слать бессмысленно, а пользователю надо говорить про связь,
+  /// а не про поломку приложения.
+  final bool networkFailure;
+
+  /// Страница загрузилась и разобралась, но расписания в ней нет.
+  ///
+  /// Это не ошибка. На каникулах и между семестрами колледж просто ничего
+  /// не публикует, и такое состояние держится неделями. Раньше пустая
+  /// страница возвращалась как `ParseResult.error`, поэтому всё лето каждый
+  /// пользователь каждые 15 минут получал бы красную ошибку «Новых дней в
+  /// расписании не найдено», а Crashlytics — отчёт о поломке разбора.
+  final bool noSchedule;
+
   const ParseResult({
     this.schedule = const {},
     this.groups = const [],
@@ -32,15 +48,29 @@ class ParseResult {
     this.error,
     this.contentHash,
     this.notModified = false,
+    this.noSchedule = false,
+    this.networkFailure = false,
   });
 
-  const ParseResult.error(String message)
+  /// Расписания на странице нет.
+  const ParseResult.empty(String hash)
+    : schedule = const {},
+      groups = const [],
+      teachers = const [],
+      error = null,
+      contentHash = hash,
+      notModified = false,
+      noSchedule = true,
+      networkFailure = false;
+
+  const ParseResult.error(String message, {this.networkFailure = false})
     : schedule = const {},
       groups = const [],
       teachers = const [],
       error = message,
       contentHash = null,
-      notModified = false;
+      notModified = false,
+      noSchedule = false;
 }
 
 /// Загружает и разбирает расписание с сайта колледжа.
@@ -110,7 +140,11 @@ class ParserService {
       );
 
       if (parsed.schedule.isEmpty) {
-        return const ParseResult.error('Новых дней в расписании не найдено');
+        // Отдельный исход, а не ошибка: см. [ParseResult.noSchedule].
+        // Отличить каникулы от сломавшейся вёрстки отсюда нельзя, поэтому
+        // решение, жаловаться ли в Crashlytics, принимает вызывающий код —
+        // он видит, менялась ли страница с прошлого раза.
+        return ParseResult.empty(contentHash);
       }
 
       return ParseResult(
@@ -122,9 +156,26 @@ class ParserService {
     } on TimeoutException {
       return const ParseResult.error(
         'Сервер колледжа не отвечает. Попробуйте позже',
+        networkFailure: true,
       );
     } on http.ClientException {
-      return const ParseResult.error('Ошибка подключения к серверу колледжа');
+      return const ParseResult.error(
+        'Ошибка подключения к серверу колледжа',
+        networkFailure: true,
+      );
+    } on SocketException {
+      // Сюда приходит и обычное отсутствие сети, и VPN без канала под ним,
+      // и запрет резолвинга. Для пользователя это одно и то же: связи нет.
+      return const ParseResult.error(
+        'Нет связи с сайтом колледжа',
+        networkFailure: true,
+      );
+    } on HandshakeException {
+      // Обычная примета captive portal: точка доступа подменяет ответ.
+      return const ParseResult.error(
+        'Нет связи с сайтом колледжа',
+        networkFailure: true,
+      );
     } catch (e, stackTrace) {
       developer.log(
         'Ошибка при загрузке расписания',
@@ -142,6 +193,10 @@ class ParserService {
     ParserColumns columns = ParserColumns.defaults,
   }) {
     final parsed = _parseHtml(_ParseInput(body, columns));
+    // Решение о пустой странице принимается здесь так же, как в
+    // [parseSchedule], иначе тесты проверяли бы не то поведение,
+    // которое работает у пользователя.
+    if (parsed.schedule.isEmpty) return const ParseResult.empty('');
     return ParseResult(
       schedule: parsed.schedule,
       groups: parsed.groups,

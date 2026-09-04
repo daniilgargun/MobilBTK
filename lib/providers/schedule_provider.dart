@@ -51,6 +51,13 @@ class ScheduleProvider extends ChangeNotifier {
   bool _isUpdating = false;
   bool _isOffline = false;
 
+  /// На сайте колледжа сейчас нет расписания.
+  ///
+  /// Отличается от «не удалось загрузить»: страница открылась и разобралась,
+  /// в ней просто нет ни одного дня. Так выглядят каникулы и промежуток
+  /// между семестрами — по несколько недель подряд.
+  bool _scheduleUnpublished = false;
+
   StreamSubscription<bool>? _connectivitySubscription;
 
   // Используем централизованный сервис кэширования
@@ -117,6 +124,7 @@ class ScheduleProvider extends ChangeNotifier {
   bool get showSuccess => _showSuccess;
   String? get successMessage => _successMessage;
   bool get isOffline => _isOffline;
+  bool get scheduleUnpublished => _scheduleUnpublished;
 
   ScheduleProvider() {
     // Раньше здесь стоял Timer.periodic(5 сек), который на каждом тике дёргал
@@ -276,9 +284,15 @@ class ScheduleProvider extends ChangeNotifier {
   }
 
   Future<ScheduleDiffResult?> updateSchedule({bool silent = false}) async {
-    // Проверяем подключение к интернету перед обновлением
+    // Дешёвая отсечка на явном случае: сетевых интерфейсов нет вообще.
+    // Обратное — не доказательство связи, поэтому решающая проверка ниже,
+    // по результату самого запроса.
     if (!await ConnectivityService().isOnline()) {
-      _handleError('Нет подключения к интернету');
+      _setOffline(true);
+      _handleError(
+        'Нет подключения к интернету',
+        details: 'Показано сохранённое расписание',
+      );
       return null;
     }
 
@@ -314,16 +328,59 @@ class ScheduleProvider extends ChangeNotifier {
       final result = await _parser.parseSchedule(previousHash: previousHash);
 
       if (result.error != null) {
+        if (result.networkFailure) {
+          // Запрос не дошёл до сайта. Это и есть единственная надёжная
+          // примета офлайна: список сетевых интерфейсов о доступности
+          // интернета не говорит ничего (см. _setOffline).
+          _setOffline(true);
+          _handleError(
+            'Нет связи с сайтом колледжа',
+            details: 'Показано сохранённое расписание',
+          );
+          return null;
+        }
+
         // Сайт колледжа рано или поздно поменяет вёрстку, и приложение
         // молча перестанет обновляться. Отметка в Crashlytics — способ
         // узнать об этом раньше, чем начнут жаловаться пользователи.
+        // Сетевые сбои сюда не попадают: их десятки тысяч в день, и
+        // настоящая поломка разбора утонула бы в них.
         CrashReporter.reportParseFailure(result.error!);
         _handleError('Ошибка обновления', details: result.error);
         return null;
       }
 
+      // Ответ получен — что бы в нём ни было, связь есть.
+      _setOffline(false);
+
       // Страница на сайте не изменилась: разбор не выполнялся, писать в базу
       // нечего. Отмечаем факт успешной проверки и выходим.
+      // Расписания на сайте нет — это законное состояние, а не сбой.
+      if (result.noSchedule) {
+        await _reportEmptyPageOnce(result.contentHash);
+
+        // Хэш намеренно НЕ сохраняем. Пустой страница может оказаться и
+        // из-за съехавшей вёрстки, а её чинят правкой `parser_columns` в
+        // удалённом конфиге. Запомни мы хэш — следующая проверка ушла бы в
+        // `notModified`, разбор не повторился бы, и починка не подействовала
+        // бы до тех пор, пока колледж сам не изменит страницу.
+        await prefs.setString(
+          'last_schedule_update',
+          DateTime.now().toIso8601String(),
+        );
+        _scheduleUnpublished = true;
+        _isLoaded = true;
+        _error = null;
+        _errorMessage = null;
+        _errorDetails = null;
+        _showError = false;
+        if (!silent) {
+          _showSuccess = true;
+          _successMessage = 'На сайте колледжа пока нет расписания';
+        }
+        return null;
+      }
+
       if (result.notModified) {
         await prefs.setString(
           'last_schedule_update',
@@ -339,6 +396,7 @@ class ScheduleProvider extends ChangeNotifier {
       }
 
       if (result.schedule.isNotEmpty) {
+        _scheduleUnpublished = false;
         _currentScheduleData = result.schedule;
         await _db.saveCurrentSchedule(_currentScheduleData!);
         await _db.archiveSchedule(_currentScheduleData!);
@@ -410,6 +468,33 @@ class ScheduleProvider extends ChangeNotifier {
       notifyListeners();
     }
     return null;
+  }
+
+  /// Ключ, под которым запомнена версия страницы, о пустоте которой уже
+  /// доложено. Нужен, чтобы не слать один и тот же отчёт каждые 15 минут.
+  static const String _emptyPageReportKey = 'last_reported_empty_page';
+
+  /// Сообщает о пустой странице один раз на каждую её версию.
+  ///
+  /// Пустая страница — это либо каникулы, либо съехавшая вёрстка, и снаружи
+  /// они неразличимы. Молчать нельзя: поломку разбора надо заметить раньше
+  /// пользователей. Слать каждый раз тоже нельзя: за лето это десятки тысяч
+  /// одинаковых отчётов от каждого устройства, в которых утонет настоящая
+  /// авария. Поэтому отчёт уходит один раз на каждую новую версию страницы:
+  /// сменилась вёрстка — новый хэш — новый отчёт.
+  Future<void> _reportEmptyPageOnce(String? contentHash) async {
+    if (contentHash == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getString(_emptyPageReportKey) == contentHash) return;
+      await prefs.setString(_emptyPageReportKey, contentHash);
+      CrashReporter.reportParseFailure(
+        'Страница расписания разобрана, но не содержит ни одного дня. '
+        'Это либо каникулы, либо изменилась вёрстка сайта.',
+      );
+    } catch (e) {
+      debugPrint('⚠️ Не удалось отметить пустую страницу: $e');
+    }
   }
 
   /// Оставляет только сегодняшние и будущие дни.
@@ -581,6 +666,21 @@ class ScheduleProvider extends ChangeNotifier {
       debugPrint('Ошибка при получении времени обновления: $e');
       return null;
     }
+  }
+
+  /// Отмечает состояние связи по факту удавшегося или сорвавшегося запроса.
+  ///
+  /// Список сетевых интерфейсов, который отдаёт `connectivity_plus`, о
+  /// доступности интернета не говорит ничего. Проверено на телефоне с
+  /// поднятым VPN: при выключенных Wi-Fi и мобильных данных
+  /// `checkConnectivity` возвращает `[ConnectivityResult.vpn]` — интерфейс
+  /// VPN остаётся «подключённым», когда канала под ним уже нет. Ровно так же
+  /// выглядят captive portal в колледже и нулевой баланс на симке.
+  /// Поэтому офлайн определяется по тому, дошёл ли запрос до сайта.
+  void _setOffline(bool value) {
+    if (_isOffline == value) return;
+    _isOffline = value;
+    notifyListeners();
   }
 
   Future<void> _checkConnectivity() async {

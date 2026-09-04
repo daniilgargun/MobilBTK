@@ -225,4 +225,38 @@ void main() {
       );
     });
   });
+
+  group('на сайте нет расписания', () {
+    // Каникулы и промежуток между семестрами: страница на месте, таблица
+    // пустая. Это законное состояние, которое держится неделями, а раньше
+    // оно возвращалось как ошибка разбора — с красным сообщением каждые
+    // 15 минут и отчётом в Crashlytics на каждую проверку.
+    test('пустая таблица — это не ошибка', () {
+      final result = ParserService.parseHtmlForTest(page(''));
+
+      expect(result.noSchedule, isTrue);
+      expect(result.error, isNull);
+      expect(result.schedule, isEmpty);
+    });
+
+    test('страница вообще без таблицы тоже не ошибка', () {
+      final result = ParserService.parseHtmlForTest(
+        '<html><body><p>Расписание временно не публикуется</p></body></html>',
+      );
+
+      expect(result.noSchedule, isTrue);
+      expect(result.error, isNull);
+    });
+
+    test('непустое расписание пустым не считается', () {
+      final result = ParserService.parseHtmlForTest(
+        page(
+          row('03-сен', '205', '1', 'Математика', 'Иванов И.И.', '202', '0'),
+        ),
+      );
+
+      expect(result.noSchedule, isFalse);
+      expect(result.schedule, isNotEmpty);
+    });
+  });
 }

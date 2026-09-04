@@ -24,7 +24,6 @@ import '../widgets/error_snackbar.dart';
 
 import 'package:share_plus/share_plus.dart';
 
-import '../services/connectivity_service.dart';
 import '../services/date_service.dart';
 import '../services/remote_config_service.dart';
 import '../services/schedule_search.dart';
@@ -129,6 +128,90 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   /// обновление: например, предупредить, что сайт колледжа переехал и нужна
   /// новая версия. Закрытое объявление больше не показывается — до тех пор,
   /// пока в конфиге не сменится идентификатор.
+  /// Полоса «нет сети» над расписанием.
+  ///
+  /// Раньше в офлайне приложение показывало сохранённое расписание, ничем не
+  /// отличая его от свежего. Для расписания это опаснее, чем для обычного
+  /// кэша: пара могла переехать в другой кабинет ещё вчера, а человек уйдёт
+  /// по старым данным. Поэтому состояние видно постоянно, а не одним
+  /// всплывающим сообщением, которое к тому же показывалось раз за всё
+  /// время работы приложения.
+  /// Объясняет, почему расписания нет.
+  ///
+  /// Три причины требуют трёх разных ответов, а раньше на все был один —
+  /// «Нет данных» с кнопкой «Повторить загрузку». На каникулах эта кнопка
+  /// не могла помочь в принципе: колледж просто ничего не опубликовал, а
+  /// человек жал её и решал, что приложение сломалось.
+  Widget _buildEmptyExplanation(ScheduleProvider provider) {
+    final theme = Theme.of(context);
+
+    final (IconData icon, String title, String details) = switch (provider) {
+      _ when provider.isOffline => (
+        Icons.cloud_off,
+        'Нет сети',
+        'Расписание загрузится, как только появится интернет.',
+      ),
+      _ when provider.scheduleUnpublished => (
+        Icons.event_busy,
+        'Расписание не опубликовано',
+        'Колледж пока не выложил расписание — так бывает на каникулах и '
+            'между семестрами. Приложение проверяет сайт само и покажет '
+            'расписание, как только оно появится.',
+      ),
+      _ => (Icons.error_outline, 'Нет данных', 'Расписание не загружено.'),
+    };
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 48, color: theme.colorScheme.outline),
+          const SizedBox(height: 12),
+          Text(title, style: theme.textTheme.titleMedium),
+          const SizedBox(height: 8),
+          Text(
+            details,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOfflineBanner(ScheduleProvider provider) {
+    if (!provider.isOffline) return const SizedBox.shrink();
+
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      color: theme.colorScheme.tertiaryContainer,
+      child: Row(
+        children: [
+          Icon(
+            Icons.cloud_off,
+            size: 18,
+            color: theme.colorScheme.onTertiaryContainer,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Нет сети. Показано сохранённое расписание — оно могло '
+              'устареть.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onTertiaryContainer,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildAnnouncement() {
     final announcement = RemoteConfigService().config.announcement;
     if (announcement.isEmpty || announcement.id == _dismissedAnnouncementId) {
@@ -620,12 +703,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             _prepareData(provider);
           }
 
-          // Показываем предупреждение об офлайн режиме через сервис
-          if (provider.isOffline) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              ConnectivityService().showOfflineWarning(context);
-            });
-          }
+          // Об офлайне говорит постоянная полоса над расписанием
+          // (_buildOfflineBanner), а не всплывающее сообщение. Прежнее
+          // показывалось один раз за всё время работы приложения и
+          // опиралось на список сетевых интерфейсов, который при поднятом
+          // VPN считает телефон подключённым.
 
           // Показываем ошибки с разными иконками в зависимости от типа
           if (provider.errorMessage != null) {
@@ -708,7 +790,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Text('Нет данных'),
+                      _buildEmptyExplanation(provider),
                       const SizedBox(height: 16),
                       if (hasArchiveButNoCurrentData)
                         ElevatedButton.icon(
@@ -751,19 +833,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                                 .onPrimary,
                           ),
                         ),
-                      if (!provider.isOffline && !hasArchiveButNoCurrentData)
+                      if (!provider.isOffline &&
+                          !provider.scheduleUnpublished &&
+                          !hasArchiveButNoCurrentData)
                         ElevatedButton(
                           onPressed: () => provider.loadSchedule(),
                           child: const Text('Повторить загрузку'),
-                        ),
-                      if (provider.isOffline)
-                        Text(
-                          'Подключитесь к интернету для загрузки расписания',
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(
-                                color: Theme.of(context).colorScheme.error,
-                              ),
-                          textAlign: TextAlign.center,
                         ),
                     ],
                   ),
@@ -772,6 +847,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                 (Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    _buildOfflineBanner(provider),
                     _buildAnnouncement(),
                     _buildSearchField(),
                     AnimatedSwitcher(

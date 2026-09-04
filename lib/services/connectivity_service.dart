@@ -4,7 +4,6 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter/material.dart';
 
-import '../widgets/error_snackbar.dart';
 import '../providers/schedule_provider.dart';
 import '../services/notification_service.dart';
 import 'lesson_reminder_service.dart';
@@ -22,9 +21,6 @@ import 'package:timezone/timezone.dart' as tz;
 class ConnectivityService {
   // Создаем один экземпляр на все приложение
   static final ConnectivityService _instance = ConnectivityService._internal();
-  static bool _hasShownOfflineWarning =
-      false; // Статическое поле для отслеживания уведомления
-
   factory ConnectivityService() => _instance;
   ConnectivityService._internal();
 
@@ -71,22 +67,38 @@ class ConnectivityService {
     }
   }
 
+  /// Есть ли хоть один пригодный сетевой интерфейс.
+  ///
+  /// Раньше проверка была написана наоборот — «в списке нет пометки none».
+  /// На Samsung с выключенными Wi-Fi и мобильными данными
+  /// `checkConnectivity` возвращает пустой список, а не список с `none`, и
+  /// такая проверка объявляла телефон подключённым: кнопка обновления
+  /// оставалась активной, предупреждение об офлайне не показывалось, а
+  /// обновление молча упиралось в сеть. Проверено на SM-A135F, Android 14.
+  static bool _hasNetwork(List<ConnectivityResult> results) =>
+      results.any((result) => result != ConnectivityResult.none);
+
   // Проверяем изменения подключения
   void _handleConnectivityChange(List<ConnectivityResult> results) async {
-    final isOnlineNow = !results.contains(ConnectivityResult.none);
+    final isOnlineNow = _hasNetwork(results);
+    final changed = isOnlineNow != _lastKnownStatus;
+    _lastKnownStatus = isOnlineNow;
 
-    if (isOnlineNow != _lastKnownStatus) {
-      _lastKnownStatus = isOnlineNow;
+    // Состояние сообщается на каждое событие, а не только на смену.
+    //
+    // `ScheduleProvider` держит свой признак офлайна по факту сорвавшегося
+    // запроса, и тот вполне может расходиться с тем, что видит система: при
+    // поднятом VPN интерфейс остаётся «подключённым» и когда канала под ним
+    // уже нет. Тогда выключение и возврат Wi-Fi для системы не смена
+    // состояния, события не было, и надпись «нет сети» висела на экране,
+    // пока связь давно вернулась.
+    if (!_statusController.isClosed) {
+      _statusController.add(isOnlineNow);
+    }
 
-      if (!_statusController.isClosed) {
-        _statusController.add(isOnlineNow);
-      }
-
-      if (isOnlineNow) {
-        _hasShownOfflineWarning = false;
-        // Автоматическая фоновая синхронизация при восстановлении связи
-        await _performBackgroundSync();
-      }
+    if (isOnlineNow && changed) {
+      // Автоматическая фоновая синхронизация при восстановлении связи
+      await _performBackgroundSync();
     }
   }
 
@@ -208,7 +220,7 @@ class ConnectivityService {
   Future<bool> isOnline() async {
     try {
       final results = await _connectivity.checkConnectivity();
-      _lastKnownStatus = !results.contains(ConnectivityResult.none);
+      _lastKnownStatus = _hasNetwork(results);
       return _lastKnownStatus;
     } catch (e) {
       return false;
@@ -216,18 +228,6 @@ class ConnectivityService {
   }
 
   bool get lastKnownStatus => _lastKnownStatus;
-
-  // Показывает предупреждение что нет инета
-  // Показывает только один раз
-  void showOfflineWarning(BuildContext context) {
-    if (!_lastKnownStatus && !_hasShownOfflineWarning) {
-      _hasShownOfflineWarning = true;
-      CustomSnackBar.showWarning(
-        context,
-        'Нет подключения к интернету. Работа в офлайн режиме.',
-      );
-    }
-  }
 
   // Сохраняет данные в кэш
   Future<void> cacheData(String key, String data) async {
