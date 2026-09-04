@@ -60,7 +60,7 @@ class PersonalizationScreen extends StatelessWidget {
                 context,
                 icon: Icons.preview_outlined,
                 title: 'Предпросмотр',
-                subtitle: 'Как будет выглядеть текст с вашими настройками',
+                subtitle: 'Как расписание будет выглядеть с вашими настройками',
                 child: _buildPreview(context, settings),
               ),
 
@@ -438,35 +438,35 @@ class PersonalizationScreen extends StatelessWidget {
                 isCompact: false,
               )
             else
-              // Показываем сетку
-              SizedBox(
-                height: 200,
-                child: GridView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    crossAxisSpacing: 4,
-                    mainAxisSpacing: 4,
-                    childAspectRatio: 0.75,
-                  ),
-                  itemCount: 2,
-                  itemBuilder: (context, index) {
-                    return ScheduleItemCard(
-                      item: ScheduleItem(
-                        group: '383',
-                        lessonNumber: index + 1,
-                        subgroup: null,
-                        subject: index == 0 ? 'Программирование' : 'Математика',
-                        teacher: 'Иванов И.И.',
-                        classroom: '205',
-                      ),
-                      date: exampleDate,
-                      index: index,
-                      isCompact: true,
-                    );
-                  },
+              // Сетка рисуется теми же константами, что и настоящее
+              // расписание, иначе предпросмотр показывает не то,
+              // что пользователь увидит на экране.
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                padding: EdgeInsets.zero,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: ScheduleItemCard.gridCrossAxisCount,
+                  crossAxisSpacing: ScheduleItemCard.gridSpacing,
+                  mainAxisSpacing: ScheduleItemCard.gridSpacing,
+                  childAspectRatio: ScheduleItemCard.gridAspectRatio,
                 ),
+                itemCount: 2,
+                itemBuilder: (context, index) {
+                  return ScheduleItemCard(
+                    item: ScheduleItem(
+                      group: '383',
+                      lessonNumber: index + 1,
+                      subgroup: null,
+                      subject: index == 0 ? 'Программирование' : 'Математика',
+                      teacher: 'Иванов И.И.',
+                      classroom: '205',
+                    ),
+                    date: exampleDate,
+                    index: index,
+                    isCompact: true,
+                  );
+                },
               ),
             const SizedBox(height: 8),
             Text(

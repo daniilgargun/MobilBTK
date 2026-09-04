@@ -14,6 +14,16 @@ class ScheduleItemCard extends StatelessWidget {
 
   static const Duration _animationDuration = Duration(milliseconds: 300);
 
+  /// Геометрия сетки расписания.
+  ///
+  /// Держим здесь, потому что этими же значениями рисуется предпросмотр
+  /// в настройках персонализации. Раньше они задавались в двух местах
+  /// и разошлись: в сетке было 1.5, в предпросмотре 0.75, и предпросмотр
+  /// показывал совсем не то, что видит пользователь.
+  static const int gridCrossAxisCount = 2;
+  static const double gridAspectRatio = 1.5;
+  static const double gridSpacing = 4;
+
   const ScheduleItemCard({
     super.key,
     required this.item,

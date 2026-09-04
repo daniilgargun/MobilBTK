@@ -454,17 +454,21 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       _preparedData[date] = allLessons;
     }
 
-    // Проверяем, не вышли ли мы за пределы доступных дней после обновления данных
+    // Проверяем, не вышли ли мы за пределы доступных дней после обновления
     if (provider.scheduleData!.isNotEmpty) {
       if (_currentPage >= provider.scheduleData!.length || _currentPage < 0) {
         _currentPage = provider.scheduleData!.length - 1;
-        // Обновляем позицию PageController при изменении индекса
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_pageController.hasClients) {
-            _pageController.jumpToPage(_currentPage);
-          }
-        });
       }
+
+      // Возвращаем PageView на выбранный день, если он почему-то оказался
+      // на другой странице (например, после пересоздания контроллера).
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_pageController.hasClients) return;
+        final page = _pageController.page?.round();
+        if (page != null && page != _currentPage) {
+          _pageController.jumpToPage(_currentPage);
+        }
+      });
     }
   }
 
@@ -569,8 +573,26 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
           return Stack(
             children: [
+              // Обновление при уже показанном расписании: тонкая полоса
+              // сверху вместо подмены всего экрана.
+              if (provider.isLoading &&
+                  provider.scheduleData != null &&
+                  provider.scheduleData!.isNotEmpty)
+                const Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: LinearProgressIndicator(minHeight: 2),
+                ),
               // Основной контент
-              if (provider.isLoading)
+              // Полноэкранный индикатор показываем только когда показывать
+              // больше нечего. Раньше он подменял содержимое и на каждом
+              // обновлении PageView уничтожался, а при пересоздании
+              // возвращался на первую страницу: список показывал первый
+              // день, а заголовок и точки — выбранный ранее.
+              if (provider.isLoading &&
+                  (provider.scheduleData == null ||
+                      provider.scheduleData!.isEmpty))
                 (Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -767,14 +789,18 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                                                   ),
                                               gridDelegate:
                                                   const SliverGridDelegateWithFixedCrossAxisCount(
-                                                    crossAxisCount: 2,
-                                                    crossAxisSpacing: 4,
-                                                    mainAxisSpacing: 4,
-                                                    // Карточка занимает высоту
-                                                    // по содержимому: при 1.15
-                                                    // почти половина карточки
-                                                    // оставалась пустой.
-                                                    childAspectRatio: 1.5,
+                                                    crossAxisCount:
+                                                        ScheduleItemCard
+                                                            .gridCrossAxisCount,
+                                                    crossAxisSpacing:
+                                                        ScheduleItemCard
+                                                            .gridSpacing,
+                                                    mainAxisSpacing:
+                                                        ScheduleItemCard
+                                                            .gridSpacing,
+                                                    childAspectRatio:
+                                                        ScheduleItemCard
+                                                            .gridAspectRatio,
                                                   ),
                                               padding: const EdgeInsets.all(4),
                                               itemCount: filteredLessons.length,
