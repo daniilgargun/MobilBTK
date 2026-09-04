@@ -25,6 +25,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../services/connectivity_service.dart';
 import '../services/date_service.dart';
+import '../services/schedule_search.dart';
 
 class ScheduleScreen extends StatefulWidget {
   const ScheduleScreen({super.key});
@@ -39,6 +40,20 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   final PageController _pageController = PageController(initialPage: 0);
   int _currentPage = 0;
   static const String _searchQueryKey = 'last_search_query';
+  static const String _searchScopeKey = 'last_search_scope';
+
+  /// Поле, которым ограничен поиск. null — искать по всем полям.
+  ///
+  /// В колледже номера групп и кабинетов пересекаются (есть и группа 209,
+  /// и кабинет 209), поэтому запрос по всем полям показывал группе 209
+  /// ещё и чужие пары, проходящие в кабинете 209.
+  EntityType? _searchScope;
+
+  /// Запомненный разбор запроса: по каким полям он вообще что-то находит.
+  /// Пересчитывается лениво, чтобы не бегать по всему расписанию на
+  /// каждую перестройку.
+  String? _scopeOptionsQuery;
+  List<EntityType> _scopeOptions = const [];
   static const EdgeInsets _listPadding = EdgeInsets.all(8);
   bool _isRestoring = false;
   bool _isShareButtonPressed = false;
@@ -89,14 +104,34 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     if (!mounted) return;
 
     final lastQuery = prefs.getString(_searchQueryKey) ?? '';
+    final lastScope = EntityTypeLabel.fromStorage(
+      prefs.getString(_searchScopeKey),
+    );
     setState(() {
       _searchQuery = lastQuery;
       _searchController.text = lastQuery;
+      _searchScope = lastScope;
     });
   }
 
-  void _onSearchChanged(String value, {bool immediate = false}) {
+  void _onSearchChanged(
+    String value, {
+    bool immediate = false,
+    EntityType? scope,
+  }) {
     setState(() {
+      // При смене текста прежняя область теряет смысл: она выбиралась
+      // под конкретный запрос.
+      if (value != _searchQuery) {
+        _searchScope = null;
+        _filteredCache.clear();
+      }
+      // Подсказка из избранного знает, чем именно она была сохранена,
+      // и сразу ставит нужную область.
+      if (scope != null) {
+        _searchScope = scope;
+        _filteredCache.clear();
+      }
       _searchQuery = value;
     });
 
@@ -112,9 +147,26 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     });
   }
 
+  /// Ограничивает поиск одним полем (или снимает ограничение).
+  void _setSearchScope(EntityType? scope) {
+    if (_searchScope == scope) return;
+    setState(() {
+      _searchScope = scope;
+      _filteredCache.clear();
+    });
+    _saveSearchQuery(_searchQuery);
+  }
+
   Future<void> _saveSearchQuery(String query) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_searchQueryKey, query);
+
+    final scope = _searchScope;
+    if (scope == null) {
+      await prefs.remove(_searchScopeKey);
+    } else {
+      await prefs.setString(_searchScopeKey, scope.storageKey);
+    }
     // Обновляем виджет при смене запроса
     if (_scheduleProvider != null) {
       await _scheduleProvider!.updateHomeWidget();
@@ -164,11 +216,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   }
 
   List<String> _buildSuggestions(ScheduleProvider provider) {
-    // Проверяем, включен ли режим избранного
-    if (provider.searchSettings.useFavorites) {
-      return provider.getFavoriteSuggestions();
-    }
-
     final suggestions = <String>{};
     final random = _suggestionSeed;
 
@@ -385,6 +432,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     _preparedSource = provider.scheduleData;
     _preparedData.clear();
     _filteredCache.clear();
+    _scopeOptionsQuery = null;
 
     for (var date in provider.scheduleData!.keys) {
       final daySchedule = provider.scheduleData![date]!;
@@ -415,26 +463,18 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
   // Получаем отфильтрованные данные с использованием кэша
   List<ScheduleItem> _getFilteredLessons(String date, String query) {
-    final cacheKey = '${date}_$query';
+    final cacheKey = '${date}_${query}_${_searchScope?.storageKey ?? 'all'}';
 
     if (_filteredCache.containsKey(cacheKey)) {
       return _filteredCache[cacheKey]!;
     }
 
     final allLessons = _preparedData[date] ?? [];
-
-    if (query.isEmpty) {
-      _filteredCache[cacheKey] = allLessons;
-      return allLessons;
-    }
-
-    final filteredLessons = allLessons.where((lesson) {
-      final lowercaseQuery = query.toLowerCase();
-      return lesson.group.toLowerCase().contains(lowercaseQuery) ||
-          lesson.teacher.toLowerCase().contains(lowercaseQuery) ||
-          lesson.classroom.toLowerCase().contains(lowercaseQuery) ||
-          lesson.subject.toLowerCase().contains(lowercaseQuery);
-    }).toList();
+    final filteredLessons = ScheduleSearch.filter(
+      allLessons,
+      query,
+      _searchScope,
+    );
 
     _filteredCache[cacheKey] = filteredLessons;
     return filteredLessons;
@@ -1167,23 +1207,17 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Переключатель режима подсказок
-                  SwitchListTile(
-                    title: const Text('Использовать избранное'),
-                    subtitle: const Text(
-                      'Вместо случайных подсказок показывать избранные элементы',
-                      style: TextStyle(fontSize: 12),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text(
+                      'Избранное добавляется звёздочкой в строке поиска '
+                      'и всегда показывается под ней. Здесь настраивается, '
+                      'что попадает в случайные подсказки.',
+                      style: Theme.of(context).textTheme.bodySmall,
                     ),
-                    value: settings.useFavorites,
-                    onChanged: (value) async {
-                      await provider.toggleFavoritesMode(value);
-                      if (mounted) setState(() {});
-                    },
                   ),
-
-                  const Divider(),
                   const Padding(
-                    padding: EdgeInsets.only(top: 8.0, bottom: 8.0),
+                    padding: EdgeInsets.only(bottom: 8.0),
                     child: Text(
                       'Показывать категории:',
                       style: TextStyle(fontWeight: FontWeight.bold),
@@ -1224,7 +1258,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     },
                   ),
 
-                  if (settings.useFavorites) ...[
+                  ...[
                     const Divider(),
                     const Padding(
                       padding: EdgeInsets.only(top: 8.0, bottom: 8.0),
@@ -1585,6 +1619,179 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     }
   }
 
+  /// Сколько занятий нашлось по каждому полю для текущего запроса.
+  /// Считается один раз на запрос и переиспользуется при перестройках.
+  Map<EntityType, int> _scopeCounts = const {};
+
+  List<EntityType> _currentScopeOptions() {
+    if (_scopeOptionsQuery == _searchQuery) return _scopeOptions;
+
+    final query = _searchQuery;
+    if (query.isEmpty) {
+      _scopeOptionsQuery = query;
+      _scopeOptions = const [];
+      _scopeCounts = const {};
+      return _scopeOptions;
+    }
+
+    final counts = <EntityType, int>{};
+    for (final lessons in _preparedData.values) {
+      ScheduleSearch.countByType(lessons, query).forEach((type, value) {
+        counts[type] = (counts[type] ?? 0) + value;
+      });
+    }
+
+    _scopeOptionsQuery = query;
+    _scopeCounts = counts;
+    _scopeOptions = EntityType.values
+        .where((type) => (counts[type] ?? 0) > 0)
+        .toList(growable: false);
+    return _scopeOptions;
+  }
+
+  /// Избранное одним списком, вместе с полем, которым оно сохранено.
+  List<MapEntry<String, EntityType>> _favoriteEntries(
+    ScheduleProvider provider,
+  ) {
+    final settings = provider.searchSettings;
+    return [
+      ...settings.favoriteGroups.map((v) => MapEntry(v, EntityType.group)),
+      ...settings.favoriteTeachers.map((v) => MapEntry(v, EntityType.teacher)),
+      ...settings.favoriteClassrooms.map(
+        (v) => MapEntry(v, EntityType.classroom),
+      ),
+      ...settings.favoriteSubjects.map((v) => MapEntry(v, EntityType.subject)),
+    ];
+  }
+
+  bool _isQueryFavorite(ScheduleProvider provider) {
+    final query = _searchQuery.trim().toLowerCase();
+    if (query.isEmpty) return false;
+    return _favoriteEntries(provider)
+        .any((entry) => entry.key.toLowerCase() == query);
+  }
+
+  Future<void> _removeFavoriteTyped(
+    ScheduleProvider provider,
+    String value,
+    EntityType type,
+  ) async {
+    switch (type) {
+      case EntityType.group:
+        await provider.removeFavoriteGroup(value);
+      case EntityType.teacher:
+        await provider.removeFavoriteTeacher(value);
+      case EntityType.classroom:
+        await provider.removeFavoriteClassroom(value);
+      case EntityType.subject:
+        await provider.removeFavoriteSubject(value);
+    }
+  }
+
+  Future<void> _addFavoriteTyped(
+    ScheduleProvider provider,
+    String value,
+    EntityType type,
+  ) async {
+    switch (type) {
+      case EntityType.group:
+        await provider.addFavoriteGroup(value);
+      case EntityType.teacher:
+        await provider.addFavoriteTeacher(value);
+      case EntityType.classroom:
+        await provider.addFavoriteClassroom(value);
+      case EntityType.subject:
+        await provider.addFavoriteSubject(value);
+    }
+  }
+
+  /// Добавляет или убирает текущий запрос из избранного.
+  ///
+  /// Раньше, чтобы добавить одну группу, нужно было открыть неподписанную
+  /// шестерёнку, включить тумблер «Использовать избранное» (без него раздел
+  /// вообще не показывался), нажать «Добавить» и выбрать категорию во втором
+  /// диалоге. Теперь это одна кнопка прямо в строке поиска.
+  Future<void> _toggleFavorite(ScheduleProvider provider) async {
+    final query = _searchQuery.trim();
+    if (query.isEmpty) return;
+
+    final existing = _favoriteEntries(provider)
+        .where((entry) => entry.key.toLowerCase() == query.toLowerCase())
+        .toList();
+
+    if (existing.isNotEmpty) {
+      for (final entry in existing) {
+        await _removeFavoriteTyped(provider, entry.key, entry.value);
+      }
+      if (mounted) {
+        CustomSnackBar.showSuccess(context, 'Убрано из избранного: $query');
+      }
+      return;
+    }
+
+    // Тип берём из выбранной области, иначе — из того, где запрос вообще
+    // находится. Так «209» сохранится именно как группа, если пользователь
+    // до этого выбрал область «Группа».
+    final options = _currentScopeOptions();
+    final type =
+        _searchScope ?? (options.isNotEmpty ? options.first : EntityType.group);
+
+    await _addFavoriteTyped(provider, query, type);
+    if (mounted) {
+      CustomSnackBar.showSuccess(
+        context,
+        'В избранное: $query (${type.label.toLowerCase()})',
+      );
+    }
+  }
+
+  /// Переключатель области поиска. Появляется только когда запрос
+  /// неоднозначен — например, «209» это и группа, и кабинет.
+  Widget _buildScopeSelector() {
+    final options = _currentScopeOptions();
+    if (_searchQuery.isEmpty || options.length < 2) {
+      return const SizedBox.shrink();
+    }
+
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Совпадений несколько — уточните, что искать:',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ChoiceChip(
+                label: const Text('Всё'),
+                selected: _searchScope == null,
+                onSelected: (_) => _setSearchScope(null),
+              ),
+              ...options.map(
+                (type) => ChoiceChip(
+                  label: Text(
+                    '${type.shortLabel} · ${_scopeCounts[type] ?? 0}',
+                  ),
+                  selected: _searchScope == type,
+                  onSelected: (_) => _setSearchScope(type),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   // Обновлен для добавления кнопки настроек
   Widget _buildSearchField() {
     return Padding(
@@ -1592,69 +1799,135 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _searchController,
-                  onChanged: _onSearchChanged,
-                  decoration: InputDecoration(
-                    labelText: 'Поиск',
-                    hintText: 'Группа, преподаватель, предмет или кабинет',
-                    border: const OutlineInputBorder(),
-                    prefixIcon: const Icon(Icons.search_outlined),
-                    suffixIcon: _searchQuery.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear),
-                            onPressed: () {
-                              _searchController.clear();
-                              _onSearchChanged('', immediate: true);
-                            },
-                          )
-                        : null,
+          Consumer<ScheduleProvider>(
+            builder: (context, provider, child) {
+              final isFavorite = _isQueryFavorite(provider);
+
+              return Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _searchController,
+                      onChanged: _onSearchChanged,
+                      decoration: InputDecoration(
+                        labelText: 'Поиск',
+                        hintText: 'Группа, преподаватель, предмет или кабинет',
+                        border: const OutlineInputBorder(),
+                        prefixIcon: const Icon(Icons.search_outlined),
+                        suffixIcon: _searchQuery.isEmpty
+                            ? null
+                            : Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: Icon(
+                                      isFavorite
+                                          ? Icons.star
+                                          : Icons.star_border,
+                                      color: isFavorite
+                                          ? Theme.of(context)
+                                                .colorScheme
+                                                .primary
+                                          : null,
+                                    ),
+                                    tooltip: isFavorite
+                                        ? 'Убрать из избранного'
+                                        : 'В избранное',
+                                    onPressed: () => _toggleFavorite(provider),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.clear),
+                                    tooltip: 'Очистить',
+                                    onPressed: () {
+                                      _searchController.clear();
+                                      _onSearchChanged('', immediate: true);
+                                    },
+                                  ),
+                                ],
+                              ),
+                      ),
+                    ),
                   ),
-                ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.settings_outlined),
-                onPressed: _showSearchSuggestionsSettings,
-                tooltip: 'Настройки подсказок',
-              ),
-            ],
+                  IconButton(
+                    icon: const Icon(Icons.tune),
+                    onPressed: _showSearchSuggestionsSettings,
+                    tooltip: 'Настройки подсказок',
+                  ),
+                ],
+              );
+            },
           ),
+
+          _buildScopeSelector(),
           if (_searchQuery.isEmpty)
             Consumer<ScheduleProvider>(
               builder: (context, provider, child) {
-                // Получаем реальные данные
-                final suggestions = _getRandomSuggestions(provider);
-                if (suggestions.isEmpty) return const SizedBox.shrink();
+                final favorites = _favoriteEntries(provider);
+                final suggestions = _getRandomSuggestions(provider)
+                    .where(
+                      (item) => !favorites.any(
+                        (fav) => fav.key.toLowerCase() == item.toLowerCase(),
+                      ),
+                    )
+                    .toList();
+
+                if (favorites.isEmpty && suggestions.isEmpty) {
+                  return const SizedBox.shrink();
+                }
+
+                final theme = Theme.of(context);
+                final captionStyle = theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                );
 
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.only(
-                        top: 8.0,
-                        left: 4.0,
-                        bottom: 4.0,
+                    // Избранное показываем всегда, а не только когда включён
+                    // тумблер в настройках: иначе о нём никто не узнавал.
+                    if (favorites.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(top: 10, bottom: 6),
+                        child: Text('Избранное', style: captionStyle),
                       ),
-                      child: Text(
-                        provider.searchSettings.useFavorites
-                            ? 'Избранное:'
-                            : 'Подсказки:',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: favorites
+                            .map(
+                              (entry) => InputChip(
+                                avatar: const Icon(Icons.star, size: 16),
+                                label: Text(entry.key),
+                                onPressed: () => _onSearchChanged(
+                                  entry.key,
+                                  immediate: true,
+                                  scope: entry.value,
+                                ),
+                                onDeleted: () => _removeFavoriteTyped(
+                                  provider,
+                                  entry.key,
+                                  entry.value,
+                                ),
+                                deleteIcon: const Icon(Icons.close, size: 16),
+                                tooltip: entry.value.label,
+                              ),
+                            )
+                            .toList(),
                       ),
-                    ),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8, // Расстояние между строками чипов
-                      children: suggestions
-                          .map((suggestion) => _buildSearchChip(suggestion))
-                          .toList(),
-                    ),
+                    ],
+                    if (suggestions.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(top: 10, bottom: 6),
+                        child: Text('Подсказки', style: captionStyle),
+                      ),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: suggestions
+                            .map((suggestion) => _buildSearchChip(suggestion))
+                            .toList(),
+                      ),
+                    ],
                   ],
                 );
               },

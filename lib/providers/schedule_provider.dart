@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../services/parser_service.dart';
 import '../services/database_service.dart';
 import '../services/date_service.dart';
+import '../services/schedule_search.dart';
 import '../services/cache_service.dart';
 import '../services/schedule_diff_service.dart';
 import '../models/schedule_model.dart';
@@ -868,7 +869,16 @@ class ScheduleProvider extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       final query = prefs.getString('last_search_query') ?? '';
-      await HomeWidgetService.updateScheduleWidget(_currentScheduleData, query);
+      // Область поиска важна и здесь: без неё виджет группы 209 показывал
+      // бы ещё и чужие пары, проходящие в кабинете 209.
+      final scope = EntityTypeLabel.fromStorage(
+        prefs.getString('last_search_scope'),
+      );
+      await HomeWidgetService.updateScheduleWidget(
+        _currentScheduleData,
+        query,
+        scope: scope,
+      );
       await HomeWidgetService.updateBellScheduleData();
     } catch (e) {
       debugPrint('❌ Ошибка обновления виджета: $e');

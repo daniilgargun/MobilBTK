@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../models/schedule_model.dart';
 import '../models/lesson_time_model.dart';
 import 'date_service.dart';
+import 'schedule_search.dart';
 
 class HomeWidgetService {
   static const String _androidWidgetName = 'ScheduleWidget';
@@ -14,8 +15,9 @@ class HomeWidgetService {
   /// Обновляет данные виджета расписания
   static Future<void> updateScheduleWidget(
     Map<String, Map<String, List<ScheduleItem>>>? scheduleData,
-    String searchQuery,
-  ) async {
+    String searchQuery, {
+    EntityType? scope,
+  }) async {
     try {
       debugPrint('🔄 Обновление виджета для запроса: "$searchQuery"');
 
@@ -37,6 +39,7 @@ class HomeWidgetService {
         final todayLessons = _filterLessons(
           scheduleData[dateStr]!,
           searchQuery,
+          scope,
         );
 
         // Проверяем, закончились ли пары на сегодня
@@ -94,7 +97,11 @@ class HomeWidgetService {
 
           if (parsedDate.isAfter(today) &&
               !DateService.isSameDay(parsedDate, today)) {
-            final dayLessons = _filterLessons(scheduleData[date]!, searchQuery);
+            final dayLessons = _filterLessons(
+              scheduleData[date]!,
+              searchQuery,
+              scope,
+            );
             if (dayLessons.isNotEmpty) {
               lessons = dayLessons;
               targetDate = parsedDate;
@@ -181,21 +188,15 @@ class HomeWidgetService {
   static List<ScheduleItem> _filterLessons(
     Map<String, List<ScheduleItem>> daySchedule,
     String query,
+    EntityType? scope,
   ) {
     final allLessons = <ScheduleItem>[];
     for (var groupLessons in daySchedule.values) {
       allLessons.addAll(groupLessons);
     }
 
-    if (query.isEmpty) return allLessons;
-
-    final lowercaseQuery = query.toLowerCase();
-    return allLessons.where((lesson) {
-      return lesson.group.toLowerCase().contains(lowercaseQuery) ||
-          lesson.teacher.toLowerCase().contains(lowercaseQuery) ||
-          lesson.classroom.toLowerCase().contains(lowercaseQuery) ||
-          lesson.subject.toLowerCase().contains(lowercaseQuery);
-    }).toList()..sort((a, b) => a.lessonNumber.compareTo(b.lessonNumber));
+    return ScheduleSearch.filter(allLessons, query, scope)
+      ..sort((a, b) => a.lessonNumber.compareTo(b.lessonNumber));
   }
 
   /// Сохраняет данные в виджет
