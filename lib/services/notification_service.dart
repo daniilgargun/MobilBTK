@@ -35,6 +35,23 @@ class NotificationService {
   /// приложения превращался в белый квадрат без деталей.
   static const String _smallIcon = '@drawable/ic_stat_schedule';
 
+  /// Запасная иконка на случай, если основной в сборке не оказалось.
+  ///
+  /// Ровно это и случилось однажды: `isShrinkResources` вырезал
+  /// `ic_stat_schedule`, потому что ссылка на него — строка в Dart, а
+  /// сокращатель ресурсов видит только ссылки из манифеста, разметки и
+  /// Kotlin. Ресурс держит `android/app/src/main/res/raw/keep.xml`, но
+  /// уведомления не та функция, ради которой приложение вправе не
+  /// запуститься, поэтому вторая линия обороны остаётся здесь.
+  static const String _fallbackIcon = '@mipmap/ic_launcher';
+
+  /// Иконка, с которой плагин согласился инициализироваться.
+  String _icon = _smallIcon;
+
+  /// Иконку берёт и [LessonReminderService]: она должна быть той же, что
+  /// принял плагин, иначе показ напоминания упадёт на неизвестном ресурсе.
+  String get icon => _icon;
+
   static const MethodChannel _platform = MethodChannel(
     'com.gargun.btktimetable/widget',
   );
@@ -43,23 +60,46 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
   bool _initialized = false;
 
-  /// Инициализация сервиса уведомлений
+  /// Инициализация сервиса уведомлений.
+  ///
+  /// Ничего не бросает наружу: вызывается из `main()` до `runApp`, и любое
+  /// исключение отсюда означало бы приложение, которое не запускается вовсе.
+  /// Разрешение здесь не запрашивается — системный диалог поверх пустого
+  /// экрана выглядит как зависший запуск, поэтому его показывает уже
+  /// работающий интерфейс ([requestPermission]).
   Future<void> initialize() async {
     if (_initialized) return;
 
-    const initSettings = InitializationSettings(
-      android: AndroidInitializationSettings(_smallIcon),
-    );
+    if (!await _initializeWith(_smallIcon)) {
+      if (!await _initializeWith(_fallbackIcon)) {
+        // Уведомлений не будет, но приложение работает.
+        return;
+      }
+      _icon = _fallbackIcon;
+    }
 
-    await _notifications.initialize(
-      settings: initSettings,
-      onDidReceiveNotificationResponse: _onNotificationTapped,
-    );
-
-    await _createNotificationChannels();
-    await _requestPermissions();
+    try {
+      await _createNotificationChannels();
+    } catch (e) {
+      debugPrint('⚠️ Не удалось создать канал уведомлений: $e');
+    }
 
     _initialized = true;
+  }
+
+  Future<bool> _initializeWith(String icon) async {
+    try {
+      await _notifications.initialize(
+        settings: InitializationSettings(
+          android: AndroidInitializationSettings(icon),
+        ),
+        onDidReceiveNotificationResponse: _onNotificationTapped,
+      );
+      return true;
+    } catch (e) {
+      debugPrint('⚠️ Уведомления не инициализировались с иконкой $icon: $e');
+      return false;
+    }
   }
 
   AndroidFlutterLocalNotificationsPlugin? get _android => _notifications
@@ -81,9 +121,16 @@ class NotificationService {
     await _android?.createNotificationChannel(scheduleChannel);
   }
 
-  /// Запрашивает разрешения на уведомления (Android 13+)
-  Future<void> _requestPermissions() async {
-    await _android?.requestNotificationsPermission();
+  /// Запрашивает разрешение на уведомления (Android 13+).
+  ///
+  /// Вызывается с уже отрисованного интерфейса: системный диалог, показанный
+  /// до первого кадра, висит поверх пустого экрана и неотличим от зависания.
+  Future<void> requestPermission() async {
+    try {
+      await _android?.requestNotificationsPermission();
+    } catch (e) {
+      debugPrint('⚠️ Запрос разрешения на уведомления не удался: $e');
+    }
   }
 
   /// Идентификатор уведомления.
@@ -109,7 +156,7 @@ class NotificationService {
         _channelId,
         _channelName,
         channelDescription: _channelDescription,
-        icon: _smallIcon,
+        icon: _icon,
         importance: Importance.high,
         priority: Priority.high,
         showWhen: true,

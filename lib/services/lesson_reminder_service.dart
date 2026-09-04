@@ -11,6 +11,7 @@ import 'package:timezone/timezone.dart' as tz;
 import '../models/lesson_time_model.dart';
 import '../models/schedule_model.dart';
 import 'date_service.dart';
+import 'notification_service.dart';
 import 'user_profile_service.dart';
 
 /// Напоминание за несколько минут до начала пары.
@@ -33,7 +34,8 @@ class LessonReminderService {
   static const String _channelDescription =
       'Напоминание за несколько минут до начала пары';
 
-  static const String _smallIcon = '@drawable/ic_stat_schedule';
+  /// Иконку берём у [NotificationService]: он мог откатиться на запасную,
+  /// если основной в сборке не оказалось, и показ с чужим ресурсом упал бы.
 
   /// Диапазон идентификаторов напоминаний.
   ///
@@ -238,12 +240,12 @@ class LessonReminderService {
         androidScheduleMode: exact
             ? AndroidScheduleMode.exactAllowWhileIdle
             : AndroidScheduleMode.inexactAllowWhileIdle,
-        notificationDetails: const NotificationDetails(
+        notificationDetails: NotificationDetails(
           android: AndroidNotificationDetails(
             _channelId,
             _channelName,
             channelDescription: _channelDescription,
-            icon: _smallIcon,
+            icon: NotificationService().icon,
             importance: Importance.high,
             priority: Priority.high,
             category: AndroidNotificationCategory.reminder,

@@ -55,22 +55,46 @@ import 'package:workmanager/workmanager.dart';
 
 import 'services/home_widget_service.dart';
 
+/// Один шаг инициализации, который не имеет права не пустить приложение.
+///
+/// Раньше вокруг этой последовательности не было ни одного `try`: осечка
+/// любого плагина уходила в обработчик зоны, `runApp` не вызывался — и
+/// пользователь видел чёрный экран. Именно так и случилось, когда
+/// сокращатель ресурсов вырезал иконку уведомлений: плагин ответил ошибкой
+/// «неизвестный ресурс», и приложение перестало запускаться целиком
+/// из-за функции, без которой прекрасно живёт.
+Future<void> _step(String name, Future<void> Function() body) async {
+  try {
+    await body();
+  } catch (e, stack) {
+    _logError('Шаг запуска «$name» не выполнен', e, stack);
+    CrashReporter.report(e, stack);
+  }
+}
+
+/// Печатает ошибку в обход заглушённого `debugPrint`.
+///
+/// В release `debugPrint` заменяется пустой функцией, чтобы рутинные логи не
+/// оседали в logcat. Сообщения об ошибках исчезали вместе с ними, поэтому
+/// падение при запуске выглядело как молчащий чёрный экран.
+/// `developer.log` тут не подходит: в AOT-сборке он до logcat не доходит.
+void _logError(String message, Object error, StackTrace? stack) {
+  debugPrintSynchronously('❌ $message: $error');
+  if (stack != null) debugPrintSynchronously(stack.toString());
+}
+
 void main() {
+  // Сотня точек логирования писала в logcat, где их мог прочитать кто угодно.
+  // Ошибки это не глушит: они идут через [_logError] мимо `debugPrint`.
+  if (kReleaseMode) {
+    debugPrint = (String? message, {int? wrapWidth}) {};
+  }
+
   // Используем runZonedGuarded для перехвата всех необработанных ошибок
   runZonedGuarded(
     () async {
       // Убедимся, что все биндинги Flutter инициализированы
       WidgetsFlutterBinding.ensureInitialized();
-
-      // В релизе гасим отладочный вывод целиком.
-      //
-      // debugPrint пишет в системный лог и в release-сборке тоже: сто с
-      // лишним точек логирования по всему приложению попадали в logcat,
-      // где их мог прочитать кто угодно, и заодно тормозили горячие места
-      // вроде разбора расписания. Диагностика теперь идёт в Crashlytics.
-      if (kReleaseMode) {
-        debugPrint = (String? message, {int? wrapWidth}) {};
-      }
 
       // Инициализация Firebase. Без google-services.json (например, в CI)
       // вызов падает — приложение должно продолжать работать и без него.
@@ -111,7 +135,11 @@ void main() {
         // Игнорируем специфическую ошибку OpenGL, которая не является критической
         if (details.toString().contains('OpenGL ES API')) return;
 
-        debugPrint('Перехвачена ошибка Flutter: ${details.exception}');
+        _logError(
+          'Перехвачена ошибка Flutter',
+          details.exception,
+          details.stack,
+        );
         FlutterError.presentError(details);
         CrashReporter.report(details.exception, details.stack, fatal: true);
       };
@@ -119,6 +147,7 @@ void main() {
       // Ошибки, до которых Flutter не дотягивается: колбэки платформы и
       // необработанные Future вне зоны runZonedGuarded.
       PlatformDispatcher.instance.onError = (error, stack) {
+        _logError('Необработанная ошибка платформы', error, stack);
         CrashReporter.report(error, stack, fatal: true);
         return true;
       };
@@ -127,27 +156,28 @@ void main() {
       tz.initializeTimeZones();
 
       // Устанавливаем русскую локаль для форматирования дат
-      await initializeDateFormatting('ru_RU', null);
+      await _step('локаль', () => initializeDateFormatting('ru_RU', null));
 
       // Инициализация сервиса проверки подключения к сети
       final connectivityService = ConnectivityService();
-      await connectivityService.init();
+      await _step('связь', connectivityService.init);
 
       // Инициализация виджета
-      // await HomeWidgetService.initialize();
-      await HomeWidgetService.updateBellScheduleData();
+      await _step('виджет звонков', HomeWidgetService.updateBellScheduleData);
 
       // Инициализация сервиса уведомлений
-      await NotificationService().initialize();
+      await _step('уведомления', NotificationService().initialize);
 
       // Профиль (своя группа или своя фамилия) и напоминания о парах.
       // Профиль нужен раньше расписания: по нему фильтруются уведомления.
-      await UserProfileService().load();
-      await LessonReminderService().load();
-      await LessonReminderService().createChannel();
+      await _step('профиль', () async {
+        await UserProfileService().load();
+        await LessonReminderService().load();
+        await LessonReminderService().createChannel();
+      });
 
       // Инициализация базы данных
-      await DatabaseService().database;
+      await _step('база данных', () => DatabaseService().database);
 
       // Создаем и загружаем данные для провайдеров
       final scheduleProvider = ScheduleProvider();
@@ -216,8 +246,7 @@ void main() {
     },
     (error, stack) {
       // Логируем ошибки, которые не были пойманы Flutter
-      debugPrint('Неперехваченная ошибка в ZonedGuarded: $error');
-      debugPrint('Стек: $stack');
+      _logError('Неперехваченная ошибка зоны', error, stack);
       CrashReporter.report(error, stack, fatal: true);
     },
   );
@@ -281,6 +310,13 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
     _loadThemeSettings();
     _checkWidgetConfiguration();
     _checkWidgetSettingsAction();
+
+    // Разрешение спрашиваем, когда интерфейс уже нарисован. Системный
+    // диалог, показанный до первого кадра, висит поверх пустого экрана и
+    // от зависшего запуска неотличим.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      NotificationService().requestPermission();
+    });
   }
 
   @override

@@ -32,6 +32,40 @@
 -keep class es.antonborri.home_widget.** { *; }
 
 # ---------------------------------------------------------------------------
+# flutter_local_notifications
+#
+# Плагин хранит запланированные уведомления в SharedPreferences в виде JSON и
+# разбирает его Gson'ом — то есть по именам полей, через рефлексию. R8 эти
+# имена переименовывает, причём в каждой сборке по-своему: записи, сделанные
+# предыдущей версией приложения, после обновления перестают читаться, и
+# запланированные напоминания о парах молча пропадают.
+#
+# Раньше это прикрывало общее правило "-keep class ** { *; }", которое
+# отключало сокращение целиком. Правило убрано как вредное, поэтому нужные
+# классы перечисляются явно — так требует документация плагина.
+#
+# Чёрный экран при запуске был не отсюда: иконку уведомления вырезал
+# сокращатель ресурсов, см. res/raw/keep.xml.
+# ---------------------------------------------------------------------------
+-keep class com.dexterous.** { *; }
+-dontwarn com.dexterous.**
+
+# ---------------------------------------------------------------------------
+# Gson (используется flutter_local_notifications)
+# ---------------------------------------------------------------------------
+-keep class com.google.gson.** { *; }
+-dontwarn com.google.gson.**
+-keep class * extends com.google.gson.TypeAdapter
+-keep class * implements com.google.gson.TypeAdapterFactory
+-keep class * implements com.google.gson.JsonSerializer
+-keep class * implements com.google.gson.JsonDeserializer
+-keepclassmembers,allowobfuscation class * {
+    @com.google.gson.annotations.SerializedName <fields>;
+}
+# Generic-типы полей нужны Gson для разбора коллекций.
+-keepattributes Signature,InnerClasses,EnclosingMethod
+
+# ---------------------------------------------------------------------------
 # Яндекс.Реклама
 # ---------------------------------------------------------------------------
 -keep class com.yandex.mobile.ads.** { *; }

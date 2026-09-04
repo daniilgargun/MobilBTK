@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Ресурсы, на которые нет ни одной ссылки из XML или Kotlin.
+
+  Иконка уведомления называется строкой в Dart
+  (`NotificationService._smallIcon`), а сокращение ресурсов
+  (`isShrinkResources = true`) видит только ссылки из манифеста, разметки и
+  кода Android. Без этого файла `ic_stat_schedule` вырезался из release-сборки,
+  плагин уведомлений отвечал на неизвестный ресурс ошибкой
+  INVALID_ICON, и приложение падало ещё до `runApp` — чёрный экран.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/ic_stat_schedule" />
