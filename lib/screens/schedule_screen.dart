@@ -119,6 +119,16 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     bool immediate = false,
     EntityType? scope,
   }) {
+    // Запрос может прийти не из поля, а из чипа избранного или подсказки.
+    // Без этой синхронизации поле оставалось пустым, хотя расписание уже
+    // было отфильтровано, и выглядело так, будто поиск сбросился.
+    if (_searchController.text != value) {
+      _searchController.value = TextEditingValue(
+        text: value,
+        selection: TextSelection.collapsed(offset: value.length),
+      );
+    }
+
     setState(() {
       // При смене текста прежняя область теряет смысл: она выбиралась
       // под конкретный запрос.
@@ -272,11 +282,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       label: Text(label),
       backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest
           .withAlpha((0.7 * 255).toInt()),
-      onPressed: () {
-        _searchController.text = label;
-        // Выбор подсказки — однократное действие, сохраняем сразу.
-        _onSearchChanged(label, immediate: true);
-      },
+      // Выбор подсказки — однократное действие, сохраняем сразу.
+      onPressed: () => _onSearchChanged(label, immediate: true),
     );
   }
 
@@ -1108,7 +1115,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   /// Раньше это были четыре галочки в отдельном диалоге за неподписанной
   /// шестерёнкой. Диалог удалён: категории переключаются прямо здесь,
   /// а избранным управляет звезда в строке поиска.
-  Widget _buildSuggestionCategories(ScheduleProvider provider) {
+  List<Widget> _suggestionCategoryChips(ScheduleProvider provider) {
     final settings = provider.searchSettings;
 
     final categories = <(String, bool, Future<void> Function(bool))>[
@@ -1118,23 +1125,55 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       ('Предметы', settings.showSubjects, provider.toggleShowSubjects),
     ];
 
-    return Wrap(
-      spacing: 6,
-      runSpacing: 6,
-      children: categories
-          .map(
-            (category) => FilterChip(
-              label: Text(category.$1),
-              selected: category.$2,
-              // Галочка заметно расширяет чип, а состояние и так видно
-              // по заливке — иначе четыре категории занимают две строки.
-              showCheckmark: false,
-              visualDensity: VisualDensity.compact,
-              labelPadding: const EdgeInsets.symmetric(horizontal: 4),
-              onSelected: (value) => category.$3(value),
-            ),
-          )
-          .toList(),
+    return categories
+        .map(
+          (category) => FilterChip(
+            label: Text(category.$1),
+            selected: category.$2,
+            // Галочка заметно расширяет чип, а состояние и так видно
+            // по заливке.
+            showCheckmark: false,
+            visualDensity: VisualDensity.compact,
+            labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+            onSelected: (value) => category.$3(value),
+          ),
+        )
+        .toList();
+  }
+
+  /// Строка чипов с необязательной подписью слева.
+  /// Прокручивается по горизонтали, поэтому её высота не зависит от
+  /// количества элементов.
+  Widget _buildChipRow({
+    String? caption,
+    TextStyle? captionStyle,
+    required List<Widget> children,
+  }) {
+    final row = SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          for (var i = 0; i < children.length; i++) ...[
+            if (i > 0) const SizedBox(width: 6),
+            children[i],
+          ],
+        ],
+      ),
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          if (caption != null) ...[
+            Text(caption, style: captionStyle),
+            const SizedBox(width: 10),
+          ],
+          Expanded(child: row),
+        ],
+      ),
     );
   }
 
@@ -1176,10 +1215,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                             IconButton(
                               icon: const Icon(Icons.clear),
                               tooltip: 'Очистить',
-                              onPressed: () {
-                                _searchController.clear();
-                                _onSearchChanged('', immediate: true);
-                              },
+                              onPressed: () =>
+                                  _onSearchChanged('', immediate: true),
                             ),
                           ],
                         ),
@@ -1207,24 +1244,24 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                   color: theme.colorScheme.onSurfaceVariant,
                 );
 
+                // Чипы кладём в горизонтальную прокрутку, а не в Wrap:
+                // с десятком избранных Wrap разрастался на несколько строк
+                // и отжимал расписание вниз. Теперь высота блока постоянная.
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // Избранное видно всегда: прежний тумблер прятал его,
                     // и о разделе никто не знал.
-                    if (favorites.isNotEmpty) ...[
-                      Padding(
-                        padding: const EdgeInsets.only(top: 12, bottom: 6),
-                        child: Text('Избранное', style: captionStyle),
-                      ),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
+                    if (favorites.isNotEmpty)
+                      _buildChipRow(
+                        caption: 'Избранное',
+                        captionStyle: captionStyle,
                         children: favorites
                             .map(
                               (entry) => InputChip(
                                 avatar: const Icon(Icons.star, size: 16),
                                 label: Text(entry.key),
+                                visualDensity: VisualDensity.compact,
                                 onPressed: () => _onSearchChanged(
                                   entry.key,
                                   immediate: true,
@@ -1241,23 +1278,19 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                             )
                             .toList(),
                       ),
-                    ],
 
-                    Padding(
-                      padding: const EdgeInsets.only(top: 12, bottom: 6),
-                      child: Text('Подсказки', style: captionStyle),
+                    _buildChipRow(
+                      caption: 'Подсказки',
+                      captionStyle: captionStyle,
+                      children: _suggestionCategoryChips(provider),
                     ),
-                    _buildSuggestionCategories(provider),
-                    if (suggestions.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
+
+                    if (suggestions.isNotEmpty)
+                      _buildChipRow(
                         children: suggestions
                             .map((suggestion) => _buildSearchChip(suggestion))
                             .toList(),
                       ),
-                    ],
                   ],
                 );
               },

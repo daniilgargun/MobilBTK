@@ -4,6 +4,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
 import '../services/database_service.dart';
+import '../services/notification_service.dart';
 import '../providers/personalization_provider.dart';
 import '../providers/schedule_provider.dart';
 
@@ -25,6 +26,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool? _isDarkMode;
   String _appVersion = '';
+  bool? _notificationsEnabled;
   int _storageDays = 30;
   String _lastUpdateInfo = 'Загрузка...';
 
@@ -32,6 +34,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _loadSettings();
+    _loadNotificationsEnabled();
     _loadAppVersion();
     _loadLastUpdateInfo();
   }
@@ -191,6 +194,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Future<void> _loadNotificationsEnabled() async {
+    final enabled = await NotificationService().areNotificationsEnabled();
+    if (!mounted) return;
+    setState(() => _notificationsEnabled = enabled);
+  }
+
+  Future<void> _onNotificationsTap() async {
+    final service = NotificationService();
+
+    if (_notificationsEnabled == false) {
+      await service.openSystemSettings();
+      await _loadNotificationsEnabled();
+      return;
+    }
+
+    await service.showNewScheduleNotification(
+      'Если вы видите это уведомление, доставка работает.',
+    );
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Отправлено проверочное уведомление')),
     );
   }
 
@@ -430,6 +458,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const PopupMenuItem(value: 90, child: Text('90 дней')),
             ],
           ),
+        ),
+        // Уведомления приходят только об изменениях, найденных фоновым
+        // разбором, поэтому ждать их можно долго. Строка ниже позволяет
+        // сразу проверить, что доставка вообще работает.
+        ListTile(
+          title: const Text('Уведомления об изменениях'),
+          subtitle: Text(
+            _notificationsEnabled == null
+                ? 'Проверка…'
+                : _notificationsEnabled!
+                ? 'Включены · нажмите для проверки'
+                : 'Выключены — нажмите, чтобы включить',
+          ),
+          leading: Icon(
+            _notificationsEnabled == false
+                ? Icons.notifications_off_outlined
+                : Icons.notifications_active_outlined,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          onTap: _onNotificationsTap,
         ),
         ListTile(
           title: const Text('Последнее обновление'),

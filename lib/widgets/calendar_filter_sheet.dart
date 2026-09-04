@@ -239,6 +239,10 @@ class _CalendarFilterSheetState extends State<_CalendarFilterSheet> {
         final isSelected = item == selected;
 
         return ListTile(
+          // Групп под сорок, преподавателей ещё больше — с обычной
+          // высотой строки прокрутки получалось слишком много.
+          dense: true,
+          visualDensity: VisualDensity.compact,
           title: Text(item),
           selected: isSelected,
           trailing: isSelected

@@ -179,6 +179,15 @@ class NotificationService {
     );
   }
 
+  /// Открывает системный экран настроек уведомлений приложения.
+  Future<void> openSystemSettings() async {
+    final androidImplementation = _notifications
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    await androidImplementation?.requestNotificationsPermission();
+  }
+
   /// Отменяет все уведомления
   Future<void> cancelAllNotifications() async {
     await _notifications.cancelAll();

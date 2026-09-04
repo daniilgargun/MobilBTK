@@ -296,21 +296,16 @@ class ScheduleProvider extends ChangeNotifier {
     }
 
     try {
-      // Сохраняем копию текущего расписания для сравнения
-      _previousScheduleData = _currentScheduleData != null
-          ? Map<String, Map<String, List<ScheduleItem>>>.from(
-              _currentScheduleData!.map(
-                (key, value) => MapEntry(
-                  key,
-                  Map<String, List<ScheduleItem>>.from(
-                    value.map(
-                      (k, v) => MapEntry(k, List<ScheduleItem>.from(v)),
-                    ),
-                  ),
-                ),
-              ),
-            )
-          : null;
+      // Снимок, с которым будем сравнивать новые данные.
+      //
+      // В фоновой задаче Workmanager провайдер создаётся заново в другом
+      // изоляте и его _currentScheduleData пуст. Раньше из-за этого
+      // _previousScheduleData всегда оказывался null, сравнение не
+      // выполнялось, и уведомления об изменениях не приходили никогда —
+      // работал только показ «обновлено» при ручном обновлении.
+      // Поэтому если в памяти пусто, берём предыдущий снимок из базы.
+      final baseline = _currentScheduleData ?? await _db.getCurrentSchedule();
+      _previousScheduleData = baseline.isEmpty ? null : _actualOnly(baseline);
 
       final prefs = await SharedPreferences.getInstance();
       final previousHash = prefs.getString(_pageHashKey);
@@ -365,12 +360,16 @@ class ScheduleProvider extends ChangeNotifier {
         // Инвалидируем кэш после успешного обновления
         _cacheService.invalidateScheduleCache();
 
-        // Сравниваем расписание и получаем изменения
+        // Сравниваем расписание и получаем изменения.
+        // Обе стороны приводим к актуальным дням: снимок из базы уже
+        // отфильтрован по дате, и без такой же фильтрации свежих данных
+        // вчерашний день, ещё висящий на сайте, выглядел бы как добавленный.
         ScheduleDiffResult? diffResult;
-        if (_previousScheduleData != null) {
+        if (_previousScheduleData != null &&
+            _previousScheduleData!.isNotEmpty) {
           diffResult = ScheduleDiffService.compareSchedules(
             _previousScheduleData!,
-            _currentScheduleData!,
+            _actualOnly(_currentScheduleData!),
           );
 
           debugPrint('📊 Изменения в расписании: ${diffResult.summary}');
@@ -406,6 +405,23 @@ class ScheduleProvider extends ChangeNotifier {
       notifyListeners();
     }
     return null;
+  }
+
+  /// Оставляет только сегодняшние и будущие дни.
+  ///
+  /// Изменения в уже прошедших днях пользователю не интересны, а главное —
+  /// снимок из таблицы current_schedule и так читается с этим фильтром,
+  /// поэтому сравнивать с нефильтрованными свежими данными нельзя.
+  Map<String, Map<String, List<ScheduleItem>>> _actualOnly(
+    Map<String, Map<String, List<ScheduleItem>>> data,
+  ) {
+    final result = <String, Map<String, List<ScheduleItem>>>{};
+    data.forEach((date, groups) {
+      if (DateService.isActualDate(date)) {
+        result[date] = groups;
+      }
+    });
+    return result;
   }
 
   /// Получает список изменений между текущим и предыдущим расписанием
