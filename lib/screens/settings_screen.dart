@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
@@ -10,8 +9,8 @@ import '../providers/schedule_provider.dart';
 
 import 'package:intl/intl.dart' as intl;
 
-import '../widgets/developer_ads_widget.dart';
 import '../main.dart'; // Для доступа к myAppKey
+import 'about_screen.dart';
 import 'personalization_screen.dart';
 
 import 'widget_settings_screen.dart';
@@ -28,7 +27,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _appVersion = '';
   int _storageDays = 30;
   String _lastUpdateInfo = 'Загрузка...';
-  int _cookieCount = 0;
 
   @override
   void initState() {
@@ -36,7 +34,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _loadSettings();
     _loadAppVersion();
     _loadLastUpdateInfo();
-    _loadCookieCount();
   }
 
   // Загружаем настройки из памяти телефона
@@ -100,15 +97,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // Загружаем количество печенек
-  Future<void> _loadCookieCount() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (mounted) {
-      setState(() {
-        _cookieCount = prefs.getInt('cookie_count') ?? 0;
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -183,84 +171,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // Секция о приложении
           _buildSectionHeader('О приложении'),
           ListTile(
-            title: const Text('Разработчик'),
-            subtitle: const Text('Gargun Daniil'),
-            leading: Icon(
-              Icons.person_outline,
-              color: Theme.of(context).colorScheme.primary,
+            // Заголовок раздела уже говорит «О приложении», поэтому
+            // строка не повторяет его, а показывает версию.
+            title: Text(
+              _appVersion.isEmpty ? 'Приложение' : 'Версия $_appVersion',
             ),
-            onTap: () {
-              _showDeveloperInfo();
-            },
-          ),
-          ListTile(
-            title: const Text('Художник'),
-            subtitle: const Text('Просто Юрик'),
-            leading: Icon(
-              Icons.brush_outlined,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-          ),
-          ListTile(
-            title: const Text('Пожертвовать печенькой'),
-            subtitle: const Text('Поддержать разработчика'),
-            leading: Icon(
-              Icons.cookie_outlined,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-            trailing: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primaryContainer,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.cookie, size: 16, color: Colors.amber),
-                  const SizedBox(width: 4),
-                  Text(
-                    '$_cookieCount',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Theme.of(context).colorScheme.onPrimaryContainer,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            onTap: () async {
-              await _showDonationDialog();
-              // Счетчик обновляется автоматически через callback
-            },
-          ),
-          ListTile(
-            title: const Text('Сайт колледжа'),
-            subtitle: const Text('bartc.by'),
-            leading: Icon(
-              Icons.public,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-            onTap: () {
-              _launchUrl('https://bartc.by');
-            },
-          ),
-          ListTile(
-            title: const Text('Telegram-бот'),
-            subtitle: const Text('@BTKraspbot'),
-            leading: Icon(
-              Icons.telegram,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-            onTap: () => _launchUrl('https://t.me/BTKraspbot'),
-          ),
-          ListTile(
-            title: const Text('Версия'),
-            subtitle: Text(_appVersion),
+            subtitle: const Text('Авторы, ссылки и поддержка'),
             leading: Icon(
               Icons.info_outline,
               color: Theme.of(context).colorScheme.primary,
             ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const AboutScreen()),
+              );
+            },
           ),
         ],
       ),
@@ -334,118 +261,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// не установлен, launchUrl бросал исключение, оно молча проглатывалось,
   /// и нажатие не давало вообще никакой реакции. Теперь для Telegram есть
   /// веб-запасной вариант, а при полной неудаче показывается уведомление.
-  Future<void> _launchUrl(String urlString) async {
-    final candidates = <Uri>[];
-
-    if (urlString.startsWith('https://t.me/')) {
-      final domain = urlString.split('/').last;
-      if (domain.isNotEmpty) {
-        candidates.add(Uri.parse('tg://resolve?domain=$domain'));
-      }
-      candidates.add(Uri.parse(urlString));
-    } else if (urlString.startsWith('tg://')) {
-      candidates.add(Uri.parse(urlString));
-      final domain = Uri.tryParse(urlString)?.queryParameters['domain'];
-      if (domain != null && domain.isNotEmpty) {
-        candidates.add(Uri.parse('https://t.me/$domain'));
-      }
-    } else {
-      candidates.add(Uri.parse(urlString));
-    }
-
-    for (final uri in candidates) {
-      try {
-        if (await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-          return;
-        }
-      } catch (e) {
-        debugPrint('Не удалось открыть $uri: $e');
-      }
-    }
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Не удалось открыть ссылку')),
-      );
-    }
-  }
-
   // Показывает инфу обо мне
-  void _showDeveloperInfo() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Разработчик'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Gargun Daniil(383)',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 16),
-            InkWell(
-              onTap: () => _launchUrl('tg://resolve?domain=Daniilgargun'),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  vertical: 8,
-                  horizontal: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primaryContainer,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.telegram,
-                      color: Theme.of(context).colorScheme.primary,
-                      size: 24,
-                    ),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        '@Daniilgargun',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.primary,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Закрыть'),
-          ),
-        ],
-      ),
-    );
-  }
-
   // Добавляем метод для показа диалога пожертвования
-  Future<void> _showDonationDialog() async {
-    await showDialog(
-      context: context,
-      barrierDismissible:
-          false, // Запрещаем закрытие при нажатии за пределами диалога
-      builder: (context) => DeveloperAdsWidget(
-        onCookieCountUpdated: () {
-          _loadCookieCount();
-        },
-      ),
-    );
-  }
-
   // Диалог сброса настроек
   Future<void> _showResetSettingsDialog() async {
     final result = await showDialog<bool>(

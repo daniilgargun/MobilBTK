@@ -1103,6 +1103,170 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
+  /// Переключатели категорий подсказок.
+  ///
+  /// Раньше это были четыре галочки в отдельном диалоге за неподписанной
+  /// шестерёнкой. Диалог удалён: категории переключаются прямо здесь,
+  /// а избранным управляет звезда в строке поиска.
+  Widget _buildSuggestionCategories(ScheduleProvider provider) {
+    final settings = provider.searchSettings;
+
+    final categories = <(String, bool, Future<void> Function(bool))>[
+      ('Группы', settings.showGroups, provider.toggleShowGroups),
+      ('Преподы', settings.showTeachers, provider.toggleShowTeachers),
+      ('Кабинеты', settings.showClassrooms, provider.toggleShowClassrooms),
+      ('Предметы', settings.showSubjects, provider.toggleShowSubjects),
+    ];
+
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: categories
+          .map(
+            (category) => FilterChip(
+              label: Text(category.$1),
+              selected: category.$2,
+              // Галочка заметно расширяет чип, а состояние и так видно
+              // по заливке — иначе четыре категории занимают две строки.
+              showCheckmark: false,
+              visualDensity: VisualDensity.compact,
+              labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+              onSelected: (value) => category.$3(value),
+            ),
+          )
+          .toList(),
+    );
+  }
+
+  Widget _buildSearchField() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Consumer<ScheduleProvider>(
+            builder: (context, provider, child) {
+              final isFavorite = _isQueryFavorite(provider);
+
+              return TextField(
+                controller: _searchController,
+                onChanged: _onSearchChanged,
+                decoration: InputDecoration(
+                  labelText: 'Поиск',
+                  hintText: 'Группа, преподаватель, предмет или кабинет',
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.search_outlined),
+                  suffixIcon: _searchQuery.isEmpty
+                      ? null
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: Icon(
+                                isFavorite ? Icons.star : Icons.star_border,
+                                color: isFavorite
+                                    ? Theme.of(context).colorScheme.primary
+                                    : null,
+                              ),
+                              tooltip: isFavorite
+                                  ? 'Убрать из избранного'
+                                  : 'В избранное',
+                              onPressed: () => _toggleFavorite(provider),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.clear),
+                              tooltip: 'Очистить',
+                              onPressed: () {
+                                _searchController.clear();
+                                _onSearchChanged('', immediate: true);
+                              },
+                            ),
+                          ],
+                        ),
+                ),
+              );
+            },
+          ),
+
+          _buildScopeSelector(),
+
+          if (_searchQuery.isEmpty)
+            Consumer<ScheduleProvider>(
+              builder: (context, provider, child) {
+                final favorites = _favoriteEntries(provider);
+                final suggestions = _getRandomSuggestions(provider)
+                    .where(
+                      (item) => !favorites.any(
+                        (fav) => fav.key.toLowerCase() == item.toLowerCase(),
+                      ),
+                    )
+                    .toList();
+
+                final theme = Theme.of(context);
+                final captionStyle = theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                );
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Избранное видно всегда: прежний тумблер прятал его,
+                    // и о разделе никто не знал.
+                    if (favorites.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(top: 12, bottom: 6),
+                        child: Text('Избранное', style: captionStyle),
+                      ),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: favorites
+                            .map(
+                              (entry) => InputChip(
+                                avatar: const Icon(Icons.star, size: 16),
+                                label: Text(entry.key),
+                                onPressed: () => _onSearchChanged(
+                                  entry.key,
+                                  immediate: true,
+                                  scope: entry.value,
+                                ),
+                                onDeleted: () => _removeFavoriteTyped(
+                                  provider,
+                                  entry.key,
+                                  entry.value,
+                                ),
+                                deleteIcon: const Icon(Icons.close, size: 16),
+                                tooltip: entry.value.label,
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ],
+
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12, bottom: 6),
+                      child: Text('Подсказки', style: captionStyle),
+                    ),
+                    _buildSuggestionCategories(provider),
+                    if (suggestions.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: suggestions
+                            .map((suggestion) => _buildSearchChip(suggestion))
+                            .toList(),
+                      ),
+                    ],
+                  ],
+                );
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
   // Функция для кнопки "Поделиться"
   // Собирает расписание в текст и открывает меню отправки
   void _shareSchedule() async {
@@ -1182,443 +1346,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   }
 
   // Показывает настройки подсказок поиска
-  void _showSearchSuggestionsSettings() {
-    final provider = Provider.of<ScheduleProvider>(context, listen: false);
-
-    showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) {
-          final settings = provider.searchSettings;
-
-          return AlertDialog(
-            title: Row(
-              children: [
-                Icon(
-                  Icons.settings,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                const SizedBox(width: 8),
-                Expanded(child: const Text('Настройки подсказок')),
-              ],
-            ),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: Text(
-                      'Избранное добавляется звёздочкой в строке поиска '
-                      'и всегда показывается под ней. Здесь настраивается, '
-                      'что попадает в случайные подсказки.',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 8.0),
-                    child: Text(
-                      'Показывать категории:',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-
-                  // Чекбоксы для категорий
-                  CheckboxListTile(
-                    title: const Text('Группы'),
-                    value: settings.showGroups,
-                    onChanged: (value) async {
-                      await provider.toggleShowGroups(value ?? true);
-                      if (mounted) setState(() {});
-                    },
-                  ),
-                  CheckboxListTile(
-                    title: const Text('Преподаватели'),
-                    value: settings.showTeachers,
-                    onChanged: (value) async {
-                      await provider.toggleShowTeachers(value ?? true);
-                      if (mounted) setState(() {});
-                    },
-                  ),
-                  CheckboxListTile(
-                    title: const Text('Кабинеты'),
-                    value: settings.showClassrooms,
-                    onChanged: (value) async {
-                      await provider.toggleShowClassrooms(value ?? true);
-                      if (mounted) setState(() {});
-                    },
-                  ),
-                  CheckboxListTile(
-                    title: const Text('Предметы'),
-                    value: settings.showSubjects,
-                    onChanged: (value) async {
-                      await provider.toggleShowSubjects(value ?? true);
-                      if (mounted) setState(() {});
-                    },
-                  ),
-
-                  ...[
-                    const Divider(),
-                    const Padding(
-                      padding: EdgeInsets.only(top: 8.0, bottom: 8.0),
-                      child: Text(
-                        'Управление избранным:',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                    ),
-
-                    // Кнопка для добавления элемента в избранное
-                    ElevatedButton.icon(
-                      icon: const Icon(Icons.add),
-                      label: const Text('Добавить в избранное'),
-                      onPressed: _showAddToFavoritesDialog,
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    // Список избранных элементов с возможностью удаления
-                    if (settings.favoriteGroups.isNotEmpty ||
-                        settings.favoriteTeachers.isNotEmpty ||
-                        settings.favoriteClassrooms.isNotEmpty ||
-                        settings.favoriteSubjects.isNotEmpty) ...[
-                      const Text('Избранные элементы:'),
-                      const SizedBox(height: 8),
-
-                      // Группы
-                      if (settings.favoriteGroups.isNotEmpty) ...[
-                        const Text(
-                          'Группы:',
-                          style: TextStyle(fontWeight: FontWeight.w500),
-                        ),
-                        _buildFavoritesChips(
-                          settings.favoriteGroups,
-                          (item) => provider.removeFavoriteGroup(item),
-                          setState,
-                        ),
-                      ],
-
-                      // Преподаватели
-                      if (settings.favoriteTeachers.isNotEmpty) ...[
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Преподаватели:',
-                          style: TextStyle(fontWeight: FontWeight.w500),
-                        ),
-                        _buildFavoritesChips(
-                          settings.favoriteTeachers,
-                          (item) => provider.removeFavoriteTeacher(item),
-                          setState,
-                        ),
-                      ],
-
-                      // Кабинеты
-                      if (settings.favoriteClassrooms.isNotEmpty) ...[
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Кабинеты:',
-                          style: TextStyle(fontWeight: FontWeight.w500),
-                        ),
-                        _buildFavoritesChips(
-                          settings.favoriteClassrooms,
-                          (item) => provider.removeFavoriteClassroom(item),
-                          setState,
-                        ),
-                      ],
-
-                      // Предметы
-                      if (settings.favoriteSubjects.isNotEmpty) ...[
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Предметы:',
-                          style: TextStyle(fontWeight: FontWeight.w500),
-                        ),
-                        _buildFavoritesChips(
-                          settings.favoriteSubjects,
-                          (item) => provider.removeFavoriteSubject(item),
-                          setState,
-                        ),
-                      ],
-                    ] else ...[
-                      const Text(
-                        'У вас пока нет избранных элементов. Добавьте их, чтобы они отображались в подсказках.',
-                        style: TextStyle(
-                          fontStyle: FontStyle.italic,
-                          color: Colors.grey,
-                        ),
-                      ),
-                    ],
-                  ],
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Закрыть'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
   // Построение чипов для избранных элементов с возможностью удаления
-  Widget _buildFavoritesChips(
-    List<String> items,
-    Function(String) onRemove,
-    StateSetter setState,
-  ) {
-    return Wrap(
-      spacing: 8,
-      children: items
-          .map(
-            (item) => Chip(
-              label: Text(item),
-              deleteIcon: const Icon(Icons.close, size: 16),
-              onDeleted: () async {
-                await onRemove(item);
-                if (mounted) setState(() {});
-              },
-            ),
-          )
-          .toList(),
-    );
-  }
-
   // Диалог для добавления нового элемента в избранное
-  void _showAddToFavoritesDialog() {
-    final provider = Provider.of<ScheduleProvider>(context, listen: false);
-    final TextEditingController textController = TextEditingController();
-    String category = 'group'; // По умолчанию - группа
-
-    // Список всех доступных значений в зависимости от категории
-    List<String> availableItems = provider.groups;
-
-    showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) {
-          // Фильтруем элементы на основе текущего ввода
-          List<String> filteredItems = textController.text.isEmpty
-              ? availableItems
-              : availableItems
-                    .where(
-                      (item) => item.toLowerCase().contains(
-                        textController.text.toLowerCase(),
-                      ),
-                    )
-                    .toList();
-
-          // Ограничиваем количество элементов для отображения
-          final displayItems = filteredItems.take(5).toList();
-
-          return AlertDialog(
-            title: const Text('Добавить в избранное'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<String>(
-                  initialValue: category,
-                  decoration: const InputDecoration(
-                    labelText: 'Категория',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: const [
-                    DropdownMenuItem(value: 'group', child: Text('Группа')),
-                    DropdownMenuItem(
-                      value: 'teacher',
-                      child: Text('Преподаватель'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'classroom',
-                      child: Text('Кабинет'),
-                    ),
-                    DropdownMenuItem(value: 'subject', child: Text('Предмет')),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) {
-                      setState(() {
-                        category = value;
-                        // Обновляем список доступных элементов при изменении категории
-                        switch (category) {
-                          case 'group':
-                            availableItems = provider.groups;
-                            break;
-                          case 'teacher':
-                            availableItems = provider.teachers;
-                            break;
-                          case 'classroom':
-                            // Получаем уникальные кабинеты из расписания
-                            if (provider.scheduleData != null) {
-                              final allItems = <String>{};
-                              for (var daySchedule
-                                  in provider.scheduleData!.values) {
-                                for (var groupSchedule in daySchedule.values) {
-                                  for (var item in groupSchedule) {
-                                    allItems.add(item.classroom);
-                                  }
-                                }
-                              }
-                              availableItems = allItems.toList()..sort();
-                            } else {
-                              availableItems = [];
-                            }
-                            break;
-                          case 'subject':
-                            // Получаем уникальные предметы из расписания
-                            if (provider.scheduleData != null) {
-                              final allItems = <String>{};
-                              for (var daySchedule
-                                  in provider.scheduleData!.values) {
-                                for (var groupSchedule in daySchedule.values) {
-                                  for (var item in groupSchedule) {
-                                    allItems.add(item.subject);
-                                  }
-                                }
-                              }
-                              availableItems = allItems.toList()..sort();
-                            } else {
-                              availableItems = [];
-                            }
-                            break;
-                        }
-                        // Сбрасываем текстовое поле
-                        textController.clear();
-                      });
-                    }
-                  },
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: textController,
-                  decoration: const InputDecoration(
-                    labelText: 'Название',
-                    hintText: 'Введите название',
-                    border: OutlineInputBorder(),
-                  ),
-                  onChanged: (value) {
-                    // Обновляем список отфильтрованных элементов при вводе
-                    setState(() {});
-                  },
-                ),
-                const SizedBox(height: 16),
-
-                // Показываем подходящие варианты
-                if (displayItems.isNotEmpty)
-                  Flexible(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: displayItems
-                          .map(
-                            (item) => InkWell(
-                              onTap: () async {
-                                final navigator = Navigator.of(context);
-                                final messenger = ScaffoldMessenger.of(context);
-
-                                // Добавляем выбранный элемент в избранное
-                                await _addToFavorites(category, item, provider);
-
-                                if (!mounted) return;
-
-                                // Показываем сообщение об успешном добавлении
-                                messenger.showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      'Добавлено в избранное: $item',
-                                    ),
-                                    duration: const Duration(seconds: 1),
-                                  ),
-                                );
-
-                                // Закрываем диалог
-                                navigator.pop();
-                              },
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 8.0,
-                                ),
-                                child: Text(item),
-                              ),
-                            ),
-                          )
-                          .toList(),
-                    ),
-                  )
-                else if (textController.text.isNotEmpty)
-                  const Text('Нет подходящих элементов'),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Отмена'),
-              ),
-              TextButton(
-                onPressed: () async {
-                  final value = textController.text.trim();
-                  final navigator = Navigator.of(context);
-                  final messenger = ScaffoldMessenger.of(context);
-
-                  if (value.isNotEmpty && availableItems.contains(value)) {
-                    await _addToFavorites(category, value, provider);
-
-                    if (!mounted) return;
-
-                    // Показываем сообщение об успешном добавлении
-                    messenger.showSnackBar(
-                      SnackBar(
-                        content: Text('Добавлено в избранное: $value'),
-                        duration: const Duration(seconds: 1),
-                      ),
-                    );
-
-                    navigator.pop();
-                  } else if (value.isNotEmpty) {
-                    // Показываем предупреждение о неверном элементе
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'Пожалуйста, выберите существующий элемент из списка',
-                        ),
-                        duration: Duration(seconds: 2),
-                      ),
-                    );
-                  }
-                },
-                child: const Text('Добавить'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
   // Вспомогательный метод для добавления элемента в избранное
-  Future<void> _addToFavorites(
-    String category,
-    String value,
-    ScheduleProvider provider,
-  ) async {
-    switch (category) {
-      case 'group':
-        await provider.addFavoriteGroup(value);
-        break;
-      case 'teacher':
-        await provider.addFavoriteTeacher(value);
-        break;
-      case 'classroom':
-        await provider.addFavoriteClassroom(value);
-        break;
-      case 'subject':
-        await provider.addFavoriteSubject(value);
-        break;
-    }
-  }
-
   /// Сколько занятий нашлось по каждому полю для текущего запроса.
   /// Считается один раз на запрос и переиспользуется при перестройках.
   Map<EntityType, int> _scopeCounts = const {};
@@ -1793,147 +1523,4 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   }
 
   // Обновлен для добавления кнопки настроек
-  Widget _buildSearchField() {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Consumer<ScheduleProvider>(
-            builder: (context, provider, child) {
-              final isFavorite = _isQueryFavorite(provider);
-
-              return Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _searchController,
-                      onChanged: _onSearchChanged,
-                      decoration: InputDecoration(
-                        labelText: 'Поиск',
-                        hintText: 'Группа, преподаватель, предмет или кабинет',
-                        border: const OutlineInputBorder(),
-                        prefixIcon: const Icon(Icons.search_outlined),
-                        suffixIcon: _searchQuery.isEmpty
-                            ? null
-                            : Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  IconButton(
-                                    icon: Icon(
-                                      isFavorite
-                                          ? Icons.star
-                                          : Icons.star_border,
-                                      color: isFavorite
-                                          ? Theme.of(context)
-                                                .colorScheme
-                                                .primary
-                                          : null,
-                                    ),
-                                    tooltip: isFavorite
-                                        ? 'Убрать из избранного'
-                                        : 'В избранное',
-                                    onPressed: () => _toggleFavorite(provider),
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(Icons.clear),
-                                    tooltip: 'Очистить',
-                                    onPressed: () {
-                                      _searchController.clear();
-                                      _onSearchChanged('', immediate: true);
-                                    },
-                                  ),
-                                ],
-                              ),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.tune),
-                    onPressed: _showSearchSuggestionsSettings,
-                    tooltip: 'Настройки подсказок',
-                  ),
-                ],
-              );
-            },
-          ),
-
-          _buildScopeSelector(),
-          if (_searchQuery.isEmpty)
-            Consumer<ScheduleProvider>(
-              builder: (context, provider, child) {
-                final favorites = _favoriteEntries(provider);
-                final suggestions = _getRandomSuggestions(provider)
-                    .where(
-                      (item) => !favorites.any(
-                        (fav) => fav.key.toLowerCase() == item.toLowerCase(),
-                      ),
-                    )
-                    .toList();
-
-                if (favorites.isEmpty && suggestions.isEmpty) {
-                  return const SizedBox.shrink();
-                }
-
-                final theme = Theme.of(context);
-                final captionStyle = theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                );
-
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Избранное показываем всегда, а не только когда включён
-                    // тумблер в настройках: иначе о нём никто не узнавал.
-                    if (favorites.isNotEmpty) ...[
-                      Padding(
-                        padding: const EdgeInsets.only(top: 10, bottom: 6),
-                        child: Text('Избранное', style: captionStyle),
-                      ),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: favorites
-                            .map(
-                              (entry) => InputChip(
-                                avatar: const Icon(Icons.star, size: 16),
-                                label: Text(entry.key),
-                                onPressed: () => _onSearchChanged(
-                                  entry.key,
-                                  immediate: true,
-                                  scope: entry.value,
-                                ),
-                                onDeleted: () => _removeFavoriteTyped(
-                                  provider,
-                                  entry.key,
-                                  entry.value,
-                                ),
-                                deleteIcon: const Icon(Icons.close, size: 16),
-                                tooltip: entry.value.label,
-                              ),
-                            )
-                            .toList(),
-                      ),
-                    ],
-                    if (suggestions.isNotEmpty) ...[
-                      Padding(
-                        padding: const EdgeInsets.only(top: 10, bottom: 6),
-                        child: Text('Подсказки', style: captionStyle),
-                      ),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: suggestions
-                            .map((suggestion) => _buildSearchChip(suggestion))
-                            .toList(),
-                      ),
-                    ],
-                  ],
-                );
-              },
-            ),
-        ],
-      ),
-    );
-  }
 }

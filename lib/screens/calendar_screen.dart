@@ -16,7 +16,7 @@ import '../widgets/schedule_item_card.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../widgets/selection_dialog.dart';
+import '../widgets/calendar_filter_sheet.dart';
 import '../services/date_service.dart';
 import '../services/cache_service.dart';
 
@@ -324,173 +324,34 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   // Обновленный диалог выбора фильтра с красивым дизайном
-  void _showFilterDialog() {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          title: Padding(
-            padding: const EdgeInsets.only(right: 8.0),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.filter_list,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                const SizedBox(width: 10),
-                const Text('Фильтр'),
-              ],
-            ),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildFilterOption(
-                'Все расписание',
-                'all',
-                Icons.calendar_view_day,
-              ),
-              _buildFilterOption('По группе', 'group', Icons.group),
-              _buildFilterOption('По преподавателю', 'teacher', Icons.person),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
   // Делает кнопку фильтра с иконкой
-  Widget _buildFilterOption(String title, String value, IconData icon) {
-    final isSelected = _selectedFilter == value;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: () async {
-          Navigator.pop(context);
+  /// Открывает лист фильтра.
+  ///
+  /// Раньше здесь было два диалога подряд: сначала выбор типа фильтра,
+  /// затем отдельное окно со списком. Теперь один лист с вкладками.
+  Future<void> _showFilterDialog() async {
+    final provider = _scheduleProvider;
+    if (provider == null) return;
 
-          if (value == 'group') {
-            await Future.delayed(const Duration(milliseconds: 300));
-            if (context.mounted) {
-              await _showGroupSelectionDialog();
-            }
-          } else if (value == 'teacher') {
-            await Future.delayed(const Duration(milliseconds: 300));
-            if (context.mounted) {
-              await _showTeacherSelectionDialog();
-            }
-          } else {
-            setState(() {
-              _selectedFilter = value;
-              _selectedGroup = null;
-              _selectedTeacher = null;
-            });
-            _saveSettings();
-            _updateCurrentEntity();
-          }
-        },
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            children: [
-              Icon(
-                icon,
-                color: isSelected
-                    ? Theme.of(context).colorScheme.primary
-                    : Theme.of(context).colorScheme.onSurface,
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    color: isSelected
-                        ? Theme.of(context).colorScheme.primary
-                        : Theme.of(context).colorScheme.onSurface,
-                    fontWeight: isSelected
-                        ? FontWeight.bold
-                        : FontWeight.normal,
-                  ),
-                ),
-              ),
-              if (isSelected)
-                Icon(Icons.check, color: Theme.of(context).colorScheme.primary),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _showGroupSelectionDialog() async {
-    if (_scheduleProvider == null) return;
-
-    final groups = _scheduleProvider!.groups;
-    if (groups.isEmpty) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('Список групп пуст')));
-      }
-      return;
-    }
-
-    if (!context.mounted) return;
-
-    await showDialog(
+    final result = await showCalendarFilterSheet(
       context: context,
-      builder: (context) => SelectionDialog(
-        title: 'Выберите группу',
-        items: groups,
-        selectedItem: _selectedGroup,
-        icon: Icons.group,
-        onSelect: (group) {
-          setState(() {
-            _selectedFilter = 'group';
-            _selectedGroup = group;
-          });
-          _saveSettings();
-          _updateCurrentEntity();
-        },
-      ),
+      groups: provider.groups,
+      teachers: provider.teachers,
+      selectedFilter: _selectedFilter,
+      selectedGroup: _selectedGroup,
+      selectedTeacher: _selectedTeacher,
     );
-  }
 
-  Future<void> _showTeacherSelectionDialog() async {
-    if (_scheduleProvider == null) return;
+    if (result == null || !mounted) return;
 
-    final teachers = _scheduleProvider!.teachers;
-    if (teachers.isEmpty) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Список преподавателей пуст')),
-        );
-      }
-      return;
-    }
+    setState(() {
+      _selectedFilter = result.filter;
+      _selectedGroup = result.group;
+      _selectedTeacher = result.teacher;
+    });
 
-    if (!context.mounted) return;
-
-    await showDialog(
-      context: context,
-      builder: (context) => SelectionDialog(
-        title: 'Выберите\nпреподавателя',
-        items: teachers,
-        selectedItem: _selectedTeacher,
-        icon: Icons.person,
-        onSelect: (teacher) {
-          setState(() {
-            _selectedFilter = 'teacher';
-            _selectedTeacher = teacher;
-          });
-          _saveSettings();
-          _updateCurrentEntity();
-        },
-      ),
-    );
+    _saveSettings();
+    _updateCurrentEntity();
   }
 
   // Показывает цветные точки для дней с парами
