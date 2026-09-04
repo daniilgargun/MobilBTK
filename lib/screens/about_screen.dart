@@ -8,6 +8,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../services/ads_service.dart';
 import '../widgets/developer_ads_widget.dart';
 
 /// Экран «О приложении»: версия, авторы, ссылки и поддержка.
@@ -146,60 +147,79 @@ class _AboutScreenState extends State<AboutScreen> {
             onTap: () => _launchUrl('https://t.me/BTKraspbot'),
           ),
 
-          const Divider(height: 32),
+          // Блок поддержки показываем, только пока реклама действительно
+          // доступна. Иначе кнопка вела в диалог, который после ожидания
+          // сообщал «Не удалось загрузить рекламу», — со стороны это
+          // выглядит как сломанное приложение, а не как отсутствие ролика.
+          ValueListenableBuilder<bool>(
+            valueListenable: AdsService().availability,
+            builder: (context, adsAvailable, _) {
+              if (!adsAvailable) return const SizedBox.shrink();
 
-          _sectionTitle(theme, 'Поддержка'),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-            child: Text(
-              'Приложение бесплатное. Поддержать можно просмотром '
-              'короткого ролика — это ни к чему не обязывает.',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-            child: Row(
-              children: [
-                Expanded(
-                  child: FilledButton.tonalIcon(
-                    onPressed: _showDonationDialog,
-                    icon: const Icon(Icons.cookie_outlined),
-                    label: const Text('Поддержать автора'),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Divider(height: 32),
+                  _sectionTitle(theme, 'Поддержка'),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                    child: Text(
+                      'Приложение бесплатное. Поддержать можно просмотром '
+                      'короткого ролика — это ни к чему не обязывает.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.primaryContainer,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.cookie, size: 18, color: Colors.amber),
-                      const SizedBox(width: 6),
-                      Text(
-                        '$_cookieCount',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: theme.colorScheme.onPrimaryContainer,
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.tonalIcon(
+                            onPressed: _showDonationDialog,
+                            icon: const Icon(Icons.cookie_outlined),
+                            label: const Text('Поддержать автора'),
+                            style: FilledButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                            ),
+                          ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primaryContainer,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.cookie,
+                                size: 18,
+                                color: Colors.amber,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                '$_cookieCount',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: theme.colorScheme.onPrimaryContainer,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              );
+            },
           ),
         ],
       ),

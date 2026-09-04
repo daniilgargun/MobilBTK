@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../services/parser_service.dart';
+import '../services/crash_reporter.dart';
 import '../services/database_service.dart';
 import '../services/date_service.dart';
 import '../services/schedule_search.dart';
@@ -313,6 +314,10 @@ class ScheduleProvider extends ChangeNotifier {
       final result = await _parser.parseSchedule(previousHash: previousHash);
 
       if (result.error != null) {
+        // Сайт колледжа рано или поздно поменяет вёрстку, и приложение
+        // молча перестанет обновляться. Отметка в Crashlytics — способ
+        // узнать об этом раньше, чем начнут жаловаться пользователи.
+        CrashReporter.reportParseFailure(result.error!);
         _handleError('Ошибка обновления', details: result.error);
         return null;
       }

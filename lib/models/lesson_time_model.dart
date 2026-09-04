@@ -1,3 +1,7 @@
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
+
 // Модель для хранения времени пар
 // Разное расписание для разных дней недели:
 // - Обычное (пн, ср, пт)
@@ -21,8 +25,12 @@ class LessonTime {
     required this.isFirstHalf,
   });
 
-  // Особые часы в расписании
-  static const Map<String, Map<String, String>> specialHours = {
+  // Особые часы в расписании.
+  // Не const: значения могут быть заменены удалённым конфигом,
+  // см. [applyRemoteOverride].
+  static Map<String, Map<String, String>> specialHours = _defaultSpecialHours;
+
+  static const Map<String, Map<String, String>> _defaultSpecialHours = {
     "tuesday": {"name": "Классный час", "time": "14:10-14:55"},
     "thursday": {"name": "Часы информации", "time": "14:10-14:35"},
   };
@@ -50,8 +58,16 @@ class LessonTime {
     return specialHours[dayType];
   }
 
-  // Все расписания звонков
-  static Map<String, List<LessonTime>> lessonTimes = {
+  // Все расписания звонков.
+  //
+  // Это единственный источник времени звонков в приложении: и экраны, и
+  // виджеты на рабочем столе считают время отсюда. Значения можно заменить
+  // удалённым конфигом (см. [applyRemoteOverride]) — колледж меняет сетку
+  // звонков раз в несколько лет, и без этого пришлось бы выпускать
+  // обновление ради четырёх строк.
+  static Map<String, List<LessonTime>> lessonTimes = _defaultLessonTimes;
+
+  static final Map<String, List<LessonTime>> _defaultLessonTimes = {
     "normal": [
       // Понедельник, среда, пятница
       LessonTime(
@@ -401,6 +417,112 @@ class LessonTime {
       ),
     ],
   };
+
+  /// Заменяет расписание звонков значениями из удалённого конфига.
+  ///
+  /// Формат — JSON, где у каждого типа дня лежит ровно 12 диапазонов
+  /// (шесть пар по два получаса), в порядке следования:
+  ///
+  /// ```json
+  /// {
+  ///   "normal":   ["8:00-8:45", "8:55-9:40", ...],
+  ///   "tuesday":  [...],
+  ///   "thursday": [...],
+  ///   "saturday": [...],
+  ///   "special": {
+  ///     "tuesday": {"name": "Классный час", "time": "14:10-14:55"}
+  ///   }
+  /// }
+  /// ```
+  ///
+  /// Проверка строгая, и это осознанно: расписание звонков — то, ради чего
+  /// приложение открывают. Если в конфиге хоть одна опечатка, для этого типа
+  /// дня остаётся вшитое время, а не половина новой сетки. Возвращает список
+  /// типов дней, которые удалось заменить.
+  static List<String> applyRemoteOverride(String source) {
+    if (source.trim().isEmpty) {
+      lessonTimes = _defaultLessonTimes;
+      specialHours = _defaultSpecialHours;
+      return const [];
+    }
+
+    try {
+      final decoded = jsonDecode(source);
+      if (decoded is! Map) return const [];
+
+      final result = Map<String, List<LessonTime>>.from(_defaultLessonTimes);
+      final applied = <String>[];
+
+      for (final dayType in const [
+        'normal',
+        'tuesday',
+        'thursday',
+        'saturday',
+      ]) {
+        final parsed = _parseDay(decoded[dayType], dayType);
+        if (parsed != null) {
+          result[dayType] = parsed;
+          applied.add(dayType);
+        }
+      }
+
+      lessonTimes = result;
+      specialHours = _parseSpecialHours(decoded['special']);
+
+      if (applied.isNotEmpty) {
+        debugPrint('🔔 Расписание звонков заменено конфигом: $applied');
+      }
+      return applied;
+    } catch (e) {
+      debugPrint('⚠️ Не удалось разобрать расписание звонков из конфига: $e');
+      return const [];
+    }
+  }
+
+  /// Разбирает 12 диапазонов одного типа дня. null — оставить вшитые.
+  static List<LessonTime>? _parseDay(Object? raw, String dayType) {
+    if (raw is! List || raw.length != 12) return null;
+
+    final times = <LessonTime>[];
+    for (var i = 0; i < raw.length; i++) {
+      final parts = raw[i].toString().split('-');
+      if (parts.length != 2) return null;
+
+      final start = parts[0].trim();
+      final end = parts[1].trim();
+      if (!_isTime(start) || !_isTime(end)) return null;
+
+      times.add(
+        LessonTime(
+          start: start,
+          end: end,
+          lessonNumber: i ~/ 2 + 1,
+          dayType: dayType,
+          isFirstHalf: i.isEven,
+        ),
+      );
+    }
+    return times;
+  }
+
+  static final RegExp _timePattern = RegExp(r'^([01]?\d|2[0-3]):[0-5]\d$');
+
+  static bool _isTime(String value) => _timePattern.hasMatch(value);
+
+  static Map<String, Map<String, String>> _parseSpecialHours(Object? raw) {
+    if (raw is! Map) return _defaultSpecialHours;
+
+    final result = <String, Map<String, String>>{};
+    raw.forEach((key, value) {
+      if (value is! Map) return;
+      final name = (value['name'] ?? '').toString().trim();
+      final time = (value['time'] ?? '').toString().trim();
+      if (name.isEmpty || time.isEmpty) return;
+      result[key.toString()] = {'name': name, 'time': time};
+    });
+
+    return result.isEmpty ? _defaultSpecialHours : result;
+  }
 
   // Получаем время для конкретной пары
   static List<LessonTime> getTimesForLesson(int lessonNumber, String dayType) {

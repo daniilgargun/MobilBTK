@@ -8,6 +8,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:yandex_mobileads/mobile_ads.dart';
 
+import 'remote_config_service.dart';
+
 /// Реклама с вознаграждением («поддержать разработчика»).
 ///
 /// Переписан под Yandex Mobile Ads 8.x:
@@ -26,6 +28,26 @@ class AdsService {
 
   bool _isInitialized = false;
 
+  /// Сколько раз подряд не удалось загрузить объявление.
+  int _consecutiveFailures = 0;
+
+  /// Сколько раз пробуем повторить загрузку, прежде чем сдаться до
+  /// следующего запуска приложения.
+  static const int _maxRetries = 4;
+
+  Timer? _retryTimer;
+
+  final ValueNotifier<bool> _available = ValueNotifier<bool>(true);
+
+  /// Есть ли смысл показывать блок «поддержать разработчика».
+  ///
+  /// Становится false, если реклама выключена удалённым конфигом, если SDK
+  /// не инициализировался или если объявления перестали загружаться. Раньше
+  /// блок был виден всегда, и при недоступной рекламе пользователь нажимал
+  /// кнопку, ждал и получал «Не удалось загрузить рекламу» — выглядело как
+  /// поломка приложения.
+  ValueListenable<bool> get availability => _available;
+
   final RewardedAdLoader _rewardedAdLoader = RewardedAdLoader();
 
   RewardedAd? _rewardedAd;
@@ -42,9 +64,18 @@ class AdsService {
   Future<void> initialize() async {
     if (_isInitialized) return;
 
+    // Выключатель на случай, если рекламная сеть перестанет работать или
+    // изменит условия: убрать блок можно из консоли, без обновления.
+    if (!RemoteConfigService().config.adsEnabled) {
+      _available.value = false;
+      debugPrint('⏸️ Реклама отключена удалённым конфигом');
+      return;
+    }
+
     try {
       await YandexAds.initialize();
       _isInitialized = true;
+      _consecutiveFailures = 0;
       debugPrint('✅ Яндекс.Ads успешно инициализирован');
 
       // Предзагружаем первое объявление, но не ждём его.
@@ -52,7 +83,35 @@ class AdsService {
     } catch (e) {
       debugPrint('❌ Ошибка при инициализации Яндекс.Ads: $e');
       _isInitialized = false;
+      _available.value = false;
     }
+  }
+
+  /// Регистрирует исход загрузки.
+  ///
+  /// Блок поддержки прячется сразу при первой неудаче, а не после серии:
+  /// за один сеанс приложение обычно делает ровно одну попытку загрузки,
+  /// так что «после трёх неудач подряд» не наступало бы никогда. Чтобы
+  /// разовый сбой сети не прятал блок до перезапуска, загрузка повторяется
+  /// с нарастающей паузой, и при успехе блок возвращается.
+  void _registerLoadResult({required bool success}) {
+    if (success) {
+      _consecutiveFailures = 0;
+      _retryTimer?.cancel();
+      _available.value = true;
+      return;
+    }
+
+    _consecutiveFailures++;
+    _available.value = false;
+
+    if (_consecutiveFailures > _maxRetries) return;
+
+    _retryTimer?.cancel();
+    _retryTimer = Timer(
+      Duration(seconds: 30 * _consecutiveFailures),
+      () => unawaited(_loadRewardedAd()),
+    );
   }
 
   /// Безопасно уничтожает текущее объявление.
@@ -96,16 +155,20 @@ class AdsService {
       }
 
       _rewardedAd = ad;
+      _registerLoadResult(success: true);
       debugPrint('✅ Реклама с вознаграждением загружена');
     } on AdRequestError catch (e) {
       debugPrint('⚠️ Ошибка загрузки рекламы: ${e.description}');
       _rewardedAd = null;
+      _registerLoadResult(success: false);
     } on TimeoutException {
       debugPrint('⚠️ Таймаут загрузки рекламы');
       _rewardedAd = null;
+      _registerLoadResult(success: false);
     } catch (e) {
       debugPrint('⚠️ Не удалось загрузить рекламу: $e');
       _rewardedAd = null;
+      _registerLoadResult(success: false);
     }
   }
 

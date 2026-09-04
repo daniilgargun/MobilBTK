@@ -1,15 +1,43 @@
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:flutter/material.dart';
+/*
+ * Copyright (c) 2024 Daniil Gargun. All rights reserved.
+ * Author: Daniil Gargun | Telegram: @Daniilgargun | Email: daniilgorgun38@gmail.com
+ */
 
-import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../models/schedule_change.dart';
 
-/// Сервис для управления локальными уведомлениями
+/// Локальные уведомления об изменениях в расписании.
+///
+/// Серверных push нет и не планируется: уведомление рождается на самом
+/// устройстве, когда фоновая синхронизация нашла разницу между старым и
+/// новым расписанием (`ScheduleDiffService`).
+///
+/// Приложение android-only, поэтому ветки для iOS убраны — они всё равно
+/// никогда не выполнялись, но создавали впечатление, что платформа
+/// поддерживается.
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
   factory NotificationService() => _instance;
   NotificationService._internal();
+
+  static const String _channelId = 'schedule_updates';
+  static const String _channelName = 'Обновления расписания';
+  static const String _channelDescription =
+      'Уведомления об изменениях в расписании';
+
+  /// Одноцветная иконка для строки состояния.
+  ///
+  /// Раньше здесь стоял `@mipmap/ic_launcher`. Начиная с Android 5.0 система
+  /// берёт от маленькой иконки только альфа-канал, поэтому цветной логотип
+  /// приложения превращался в белый квадрат без деталей.
+  static const String _smallIcon = '@drawable/ic_stat_schedule';
+
+  static const MethodChannel _platform = MethodChannel(
+    'com.gargun.btktimetable/widget',
+  );
 
   final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
@@ -19,21 +47,8 @@ class NotificationService {
   Future<void> initialize() async {
     if (_initialized) return;
 
-    // Настройки для Android
-    const androidSettings = AndroidInitializationSettings(
-      '@mipmap/ic_launcher',
-    );
-
-    // Настройки для iOS
-    const iosSettings = DarwinInitializationSettings(
-      requestAlertPermission: true,
-      requestBadgePermission: true,
-      requestSoundPermission: true,
-    );
-
     const initSettings = InitializationSettings(
-      android: androidSettings,
-      iOS: iosSettings,
+      android: AndroidInitializationSettings(_smallIcon),
     );
 
     await _notifications.initialize(
@@ -41,47 +56,34 @@ class NotificationService {
       onDidReceiveNotificationResponse: _onNotificationTapped,
     );
 
-    // Создаем каналы уведомлений для Android
-    if (Platform.isAndroid) {
-      await _createNotificationChannels();
-    }
-
-    // Запрашиваем разрешения на Android 13+
-    if (Platform.isAndroid) {
-      await _requestPermissions();
-    }
+    await _createNotificationChannels();
+    await _requestPermissions();
 
     _initialized = true;
   }
 
+  AndroidFlutterLocalNotificationsPlugin? get _android => _notifications
+      .resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin
+      >();
+
   /// Создает каналы уведомлений для Android
   Future<void> _createNotificationChannels() async {
     const scheduleChannel = AndroidNotificationChannel(
-      'schedule_updates',
-      'Обновления расписания',
-      description: 'Уведомления об изменениях в расписании',
+      _channelId,
+      _channelName,
+      description: _channelDescription,
       importance: Importance.high,
       playSound: true,
       enableVibration: true,
     );
 
-    await _notifications
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >()
-        ?.createNotificationChannel(scheduleChannel);
+    await _android?.createNotificationChannel(scheduleChannel);
   }
 
   /// Запрашивает разрешения на уведомления (Android 13+)
   Future<void> _requestPermissions() async {
-    final androidImplementation = _notifications
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >();
-
-    if (androidImplementation != null) {
-      await androidImplementation.requestNotificationsPermission();
-    }
+    await _android?.requestNotificationsPermission();
   }
 
   /// Идентификатор уведомления.
@@ -97,95 +99,70 @@ class NotificationService {
   /// Обработчик нажатия на уведомление
   void _onNotificationTapped(NotificationResponse response) {
     debugPrint('Уведомление нажато: ${response.payload}');
-    // Здесь можно добавить логику открытия конкретного экрана
+  }
+
+  /// Сводка изменений бывает длинной (несколько пар в нескольких днях),
+  /// поэтому текст разворачивается по нажатию, а не обрезается многоточием.
+  NotificationDetails _details(String body) {
+    return NotificationDetails(
+      android: AndroidNotificationDetails(
+        _channelId,
+        _channelName,
+        channelDescription: _channelDescription,
+        icon: _smallIcon,
+        importance: Importance.high,
+        priority: Priority.high,
+        showWhen: true,
+        enableVibration: true,
+        playSound: true,
+        styleInformation: BigTextStyleInformation(body),
+      ),
+    );
   }
 
   /// Показывает уведомление об изменениях в расписании
   Future<void> showScheduleUpdateNotification(ScheduleDiffResult diff) async {
+    if (!diff.hasChanges) return;
+    await _show('Обновление расписания', diff.summary);
+  }
+
+  /// Показывает уведомление о новом расписании
+  Future<void> showNewScheduleNotification(String message) async {
+    await _show('Расписание обновлено', message);
+  }
+
+  Future<void> _show(String title, String body) async {
     if (!_initialized) {
       await initialize();
     }
-
-    if (!diff.hasChanges) return;
-
-    const title = 'Обновление расписания';
-    final body = diff.summary;
-
-    const androidDetails = AndroidNotificationDetails(
-      'schedule_updates',
-      'Обновления расписания',
-      channelDescription: 'Уведомления об изменениях в расписании',
-      importance: Importance.high,
-      priority: Priority.high,
-      showWhen: true,
-      enableVibration: true,
-      playSound: true,
-    );
-
-    const iosDetails = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-    );
-
-    const details = NotificationDetails(
-      android: androidDetails,
-      iOS: iosDetails,
-    );
 
     await _notifications.show(
       id: _nextNotificationId(),
       title: title,
       body: body,
-      notificationDetails: details,
-      payload: 'schedule_update',
-    );
-  }
-
-  /// Показывает уведомление о новом расписании
-  Future<void> showNewScheduleNotification(String message) async {
-    if (!_initialized) {
-      await initialize();
-    }
-
-    const androidDetails = AndroidNotificationDetails(
-      'schedule_updates',
-      'Обновления расписания',
-      channelDescription: 'Уведомления об изменениях в расписании',
-      importance: Importance.high,
-      priority: Priority.high,
-      showWhen: true,
-      enableVibration: true,
-      playSound: true,
-    );
-
-    const iosDetails = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-    );
-
-    const details = NotificationDetails(
-      android: androidDetails,
-      iOS: iosDetails,
-    );
-
-    await _notifications.show(
-      id: _nextNotificationId(),
-      title: 'Расписание обновлено',
-      body: message,
-      notificationDetails: details,
+      notificationDetails: _details(body),
       payload: 'schedule_update',
     );
   }
 
   /// Открывает системный экран настроек уведомлений приложения.
+  ///
+  /// Сначала пробуем обычный запрос разрешения: если пользователь ещё не
+  /// отказывал, он увидит привычный системный диалог. После окончательного
+  /// отказа Android больше не показывает диалог и запрос молча возвращает
+  /// false — тогда открываем настройки приложения напрямую, иначе нажатие
+  /// в настройках выглядело бы как «ничего не произошло».
   Future<void> openSystemSettings() async {
-    final androidImplementation = _notifications
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >();
-    await androidImplementation?.requestNotificationsPermission();
+    final granted = await _android?.requestNotificationsPermission() ?? false;
+    if (granted) return;
+
+    try {
+      await _platform.invokeMethod('openNotificationSettings');
+    } on PlatformException catch (e) {
+      debugPrint('⚠️ Не удалось открыть настройки уведомлений: $e');
+    } on MissingPluginException {
+      // Канал доступен только когда открыта MainActivity.
+    }
   }
 
   /// Отменяет все уведомления
@@ -195,15 +172,6 @@ class NotificationService {
 
   /// Проверяет, разрешены ли уведомления
   Future<bool> areNotificationsEnabled() async {
-    if (Platform.isAndroid) {
-      final androidImplementation = _notifications
-          .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin
-          >();
-      if (androidImplementation != null) {
-        return await androidImplementation.areNotificationsEnabled() ?? false;
-      }
-    }
-    return true; // Для iOS предполагаем, что разрешено
+    return await _android?.areNotificationsEnabled() ?? false;
   }
 }

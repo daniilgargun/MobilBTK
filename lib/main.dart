@@ -22,7 +22,6 @@ import 'dart:io';
 import 'package:firebase_core/firebase_core.dart';
 
 import 'package:dynamic_color/dynamic_color.dart';
-import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -42,8 +41,11 @@ import 'screens/settings_screen.dart';
 import 'screens/widget_settings_screen.dart';
 import 'services/ads_service.dart';
 import 'services/connectivity_service.dart';
+import 'services/crash_reporter.dart';
 import 'services/database_service.dart';
 import 'services/notification_service.dart';
+import 'services/remote_config_service.dart';
+import 'models/lesson_time_model.dart';
 import 'themes/theme_presets.dart';
 
 import 'package:workmanager/workmanager.dart';
@@ -58,8 +60,36 @@ void main() {
       // Убедимся, что все биндинги Flutter инициализированы
       WidgetsFlutterBinding.ensureInitialized();
 
-      // Инициализация Firebase
-      await Firebase.initializeApp();
+      // В релизе гасим отладочный вывод целиком.
+      //
+      // debugPrint пишет в системный лог и в release-сборке тоже: сто с
+      // лишним точек логирования по всему приложению попадали в logcat,
+      // где их мог прочитать кто угодно, и заодно тормозили горячие места
+      // вроде разбора расписания. Диагностика теперь идёт в Crashlytics.
+      if (kReleaseMode) {
+        debugPrint = (String? message, {int? wrapWidth}) {};
+      }
+
+      // Инициализация Firebase. Без google-services.json (например, в CI)
+      // вызов падает — приложение должно продолжать работать и без него.
+      var firebaseReady = false;
+      try {
+        await Firebase.initializeApp();
+        firebaseReady = true;
+      } catch (e) {
+        debugPrint('⚠️ Firebase недоступен: $e');
+      }
+
+      if (firebaseReady) {
+        await CrashReporter.initialize();
+      }
+
+      // Настройки, которые можно поменять без выпуска новой версии:
+      // адрес страницы расписания, раскладка колонок в её таблице,
+      // расписание звонков, выключатель рекламы, объявление.
+      final remoteConfig = RemoteConfigService();
+      await remoteConfig.load();
+      LessonTime.applyRemoteOverride(remoteConfig.config.bellScheduleJson);
 
       // Настраиваем отображение от края до края (Edge-to-Edge)
       // Это позволяет приложению рисовать под системными панелями
@@ -77,10 +107,18 @@ void main() {
       // Глобальный обработчик ошибок Flutter
       FlutterError.onError = (FlutterErrorDetails details) {
         // Игнорируем специфическую ошибку OpenGL, которая не является критической
-        if (!details.toString().contains('OpenGL ES API')) {
-          debugPrint('Перехвачена ошибка Flutter: ${details.exception}');
-          FlutterError.presentError(details);
-        }
+        if (details.toString().contains('OpenGL ES API')) return;
+
+        debugPrint('Перехвачена ошибка Flutter: ${details.exception}');
+        FlutterError.presentError(details);
+        CrashReporter.report(details.exception, details.stack, fatal: true);
+      };
+
+      // Ошибки, до которых Flutter не дотягивается: колбэки платформы и
+      // необработанные Future вне зоны runZonedGuarded.
+      PlatformDispatcher.instance.onError = (error, stack) {
+        CrashReporter.report(error, stack, fatal: true);
+        return true;
       };
 
       // Инициализируем временные зоны для работы с датами и уведомлениями
@@ -133,19 +171,27 @@ void main() {
         debugPrint('Ошибка инициализации Workmanager: $e');
       }
 
-      // Запускаем инициализацию рекламы с задержкой, чтобы не блокировать старт
-      if (!kIsWeb) {
-        Future.delayed(const Duration(seconds: 3), () {
-          AdsService().initialize().catchError((e, stackTrace) {
-            // РЕКОМЕНДАЦИЯ: Для релизных версий здесь стоит использовать
-            // сервис для сбора ошибок, например, Firebase Crashlytics или Sentry.
-            debugPrint('------ ОШИБКА ИНИЦИАЛИЗАЦИИ РЕКЛАМЫ ------');
-            debugPrint('Ошибка: $e');
-            debugPrint('Стек: $stackTrace');
-            debugPrint('------------------------------------------');
-          });
-        });
+      // Свежий конфиг тянем в фоне: старт приложения не должен ждать сеть.
+      if (firebaseReady) {
+        unawaited(
+          remoteConfig.refresh().then((_) {
+            LessonTime.applyRemoteOverride(
+              remoteConfig.config.bellScheduleJson,
+            );
+            // Виджеты на рабочем столе получают время уже посчитанным,
+            // поэтому после смены сетки звонков их надо перерисовать.
+            return HomeWidgetService.updateBellScheduleData();
+          }),
+        );
       }
+
+      // Запускаем инициализацию рекламы с задержкой, чтобы не блокировать старт
+      Future.delayed(const Duration(seconds: 3), () {
+        AdsService().initialize().catchError((e, stackTrace) {
+          debugPrint('❌ Ошибка инициализации рекламы: $e');
+          CrashReporter.report(e, stackTrace);
+        });
+      });
 
       // Запускаем приложение
       runApp(
@@ -164,6 +210,7 @@ void main() {
       // Логируем ошибки, которые не были пойманы Flutter
       debugPrint('Неперехваченная ошибка в ZonedGuarded: $error');
       debugPrint('Стек: $stack');
+      CrashReporter.report(error, stack, fatal: true);
     },
   );
 }
@@ -181,12 +228,20 @@ void callbackDispatcher() {
         tz.initializeTimeZones();
         await initializeDateFormatting('ru_RU', null);
 
+        // Фоновая задача живёт в отдельном изоляте: статика главного
+        // изолята сюда не попадает, поэтому конфиг читаем заново.
+        // Firebase здесь не поднимаем — значения уже сохранены в
+        // SharedPreferences при последнем обновлении из приложения.
+        final config = await RemoteConfigService().load();
+        LessonTime.applyRemoteOverride(config.bellScheduleJson);
+
         await ConnectivityService.performPeriodicSync();
         return true;
       }
       return false;
-    } catch (e) {
+    } catch (e, stack) {
       debugPrint('❌ Ошибка выполнения фоновой задачи: $e');
+      CrashReporter.report(e, stack);
       return false;
     }
   });
@@ -349,10 +404,6 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
                 pageTransitionsTheme: const PageTransitionsTheme(
                   builders: {
                     TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
-                    TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
-                    TargetPlatform.linux: FadeUpwardsPageTransitionsBuilder(),
-                    TargetPlatform.macOS: FadeUpwardsPageTransitionsBuilder(),
-                    TargetPlatform.windows: FadeUpwardsPageTransitionsBuilder(),
                   },
                 ),
               ),
@@ -362,10 +413,6 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
                 pageTransitionsTheme: const PageTransitionsTheme(
                   builders: {
                     TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
-                    TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
-                    TargetPlatform.linux: FadeUpwardsPageTransitionsBuilder(),
-                    TargetPlatform.macOS: FadeUpwardsPageTransitionsBuilder(),
-                    TargetPlatform.windows: FadeUpwardsPageTransitionsBuilder(),
                   },
                 ),
               ),

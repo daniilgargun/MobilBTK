@@ -12,6 +12,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobilapp/services/parser_service.dart';
+import 'package:mobilapp/services/remote_config_service.dart';
 
 String page(String rows) {
   return '''
@@ -43,6 +44,42 @@ String row(
 
 void main() {
   final year = DateTime.now().year;
+
+  group('раскладка колонок из конфига', () {
+    // Ради этого случая раскладка и вынесена в конфиг: если колледж
+    // вставит колонку в начало таблицы, все поля съедут на одну позицию,
+    // и приложение начнёт показывать преподавателя в графе предмета.
+    String shiftedRow() {
+      return '<tr><td>#</td><td>03-сен</td><td>205</td><td>1</td>'
+          '<td>Математика</td><td>Иванов И.И.</td><td>202</td>'
+          '<td>0</td></tr>';
+    }
+
+    test('со вшитой раскладкой сдвинутая таблица разбирается неверно', () {
+      final result = ParserService.parseHtmlForTest(page(shiftedRow()));
+
+      // Группой стала дата — ровно та поломка, от которой защищаемся.
+      expect(result.groups, isNot(contains('205')));
+    });
+
+    test('сдвинутая раскладка из конфига разбирается верно', () {
+      final result = ParserService.parseHtmlForTest(
+        page(shiftedRow()),
+        columns: ParserColumns.fromJson(
+          '{"date":1,"group":2,"number":3,"subject":4,'
+          '"teacher":5,"classroom":6,"subgroup":7}',
+        ),
+      );
+
+      expect(result.groups, ['205']);
+      expect(result.teachers, ['Иванов И.И.']);
+
+      final lesson = result.schedule['03.09.$year']!['205']!.single;
+      expect(lesson.subject, 'Математика');
+      expect(lesson.classroom, '202');
+      expect(lesson.lessonNumber, 1);
+    });
+  });
 
   group('разбор страницы', () {
     test('строка заголовка на <th> не попадает в данные', () {

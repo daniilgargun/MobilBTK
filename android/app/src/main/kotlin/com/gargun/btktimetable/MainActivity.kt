@@ -34,6 +34,21 @@ class MainActivity : FlutterActivity() {
             } else if (call.method == "checkWidgetSettingsAction") {
                  result.success(shouldOpenWidgetSettings)
                  shouldOpenWidgetSettings = false
+            } else if (call.method == "openNotificationSettings") {
+                // Вызывается, когда пользователь окончательно отказал в
+                // разрешении: системный диалог больше не появляется, и без
+                // этого перехода в настройках приложения нажатие на строку
+                // "Уведомления об изменениях" выглядело бы как бездействие.
+                try {
+                    val intent = Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                        putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    startActivity(intent)
+                    result.success(true)
+                } catch (e: Exception) {
+                    result.error("ERROR", e.message, null)
+                }
             } else if (call.method == "getWallpaper") {
                 try {
                     val wallpaperManager = android.app.WallpaperManager.getInstance(context)

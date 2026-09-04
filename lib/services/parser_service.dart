@@ -7,6 +7,7 @@ import 'package:html/parser.dart' as html;
 import 'package:http/http.dart' as http;
 
 import '../models/schedule_model.dart';
+import 'remote_config_service.dart';
 
 /// Результат загрузки расписания с сайта колледжа.
 class ParseResult {
@@ -56,8 +57,12 @@ class ParseResult {
 /// кодом между запусками, а в отдельный изолят уходит только разбор HTML —
 /// единственная действительно тяжёлая часть.
 class ParserService {
-  final String url =
-      "https://bartc.by/index.php/obuchayushchemusya/dnevnoe-otdelenie/tekushchee-raspisanie";
+  /// Адрес страницы расписания.
+  ///
+  /// Значение приходит из [RemoteConfigService]: если колледж перенесёт
+  /// страницу, ссылку можно поменять из консоли, не выпуская обновление.
+  /// Пока конфиг не загружен, используется вшитый адрес.
+  String get url => RemoteConfigService().config.scheduleUrl;
 
   /// Жёсткий таймаут сетевого запроса.
   /// Без него зависший ответ сервера навсегда оставлял экран в состоянии
@@ -79,9 +84,11 @@ class ParserService {
   /// содержимое не изменилось, разбор пропускается и возвращается
   /// результат с `notModified: true`.
   Future<ParseResult> parseSchedule({String? previousHash}) async {
+    final config = RemoteConfigService().config;
+
     try {
       final response = await http
-          .get(Uri.parse(url), headers: _headers)
+          .get(Uri.parse(config.scheduleUrl), headers: _headers)
           .timeout(_requestTimeout);
 
       if (response.statusCode != 200) {
@@ -97,7 +104,10 @@ class ParserService {
         return ParseResult(contentHash: contentHash, notModified: true);
       }
 
-      final parsed = await compute(_parseHtml, response.body);
+      final parsed = await compute(
+        _parseHtml,
+        _ParseInput(response.body, config.columns),
+      );
 
       if (parsed.schedule.isEmpty) {
         return const ParseResult.error('Новых дней в расписании не найдено');
@@ -127,8 +137,11 @@ class ParserService {
 
   /// Разбор HTML без сети — точка входа для тестов.
   @visibleForTesting
-  static ParseResult parseHtmlForTest(String body) {
-    final parsed = _parseHtml(body);
+  static ParseResult parseHtmlForTest(
+    String body, {
+    ParserColumns columns = ParserColumns.defaults,
+  }) {
+    final parsed = _parseHtml(_ParseInput(body, columns));
     return ParseResult(
       schedule: parsed.schedule,
       groups: parsed.groups,
@@ -158,6 +171,15 @@ class ParserService {
   }
 }
 
+/// Аргумент `compute`: разбирать нужно и HTML, и раскладку колонок,
+/// а передать в изолят можно только один объект.
+class _ParseInput {
+  final String body;
+  final ParserColumns columns;
+
+  const _ParseInput(this.body, this.columns);
+}
+
 /// Данные, полученные разбором страницы. Возвращается из изолята.
 class _ParsedPage {
   final Map<String, Map<String, List<ScheduleItem>>> schedule;
@@ -168,15 +190,15 @@ class _ParsedPage {
 }
 
 /// Разбор HTML. Выполняется в отдельном изоляте через `compute`.
-_ParsedPage _parseHtml(String body) {
-  final document = html.parse(body);
+_ParsedPage _parseHtml(_ParseInput input) {
+  final document = html.parse(input.body);
   final tables = document.getElementsByTagName('table');
   final schedule = <String, Map<String, List<ScheduleItem>>>{};
   final groupSet = <String>{};
   final teacherSet = <String>{};
 
   for (final table in tables) {
-    _parseTableData(table, schedule, groupSet, teacherSet);
+    _parseTableData(table, schedule, groupSet, teacherSet, input.columns);
   }
 
   return _ParsedPage(
@@ -191,6 +213,7 @@ int _parseTableData(
   Map<String, Map<String, List<ScheduleItem>>> scheduleData,
   Set<String> groupSet,
   Set<String> teacherSet,
+  ParserColumns columns,
 ) {
   final rows = table.getElementsByTagName('tr');
   String currentDay = "";
@@ -201,9 +224,9 @@ int _parseTableData(
     // Заголовок таблицы состоит из <th>, поэтому список <td> у него пуст
     // и строка отбрасывается — так и должно быть.
     final cells = row.getElementsByTagName('td');
-    if (cells.isEmpty) continue;
+    if (cells.length <= columns.date) continue;
 
-    final dateCell = cells[0].text.trim();
+    final dateCell = cells[columns.date].text.trim();
     if (dateCell.isEmpty) continue;
 
     try {
@@ -213,13 +236,15 @@ int _parseTableData(
         scheduleData[currentDay] = {};
       }
 
-      final groupCell = cells.length > 1 ? cells[1].text.trim() : "";
+      final groupCell = cells.length > columns.group
+          ? cells[columns.group].text.trim()
+          : "";
       if (groupCell.isEmpty) continue;
 
       currentGroup = groupCell;
       groupSet.add(currentGroup);
 
-      final lesson = _extractLessonData(cells);
+      final lesson = _extractLessonData(cells, columns);
       if (lesson == null) continue;
 
       final lessonWithGroup = lesson.copyWith(group: currentGroup);
@@ -295,15 +320,17 @@ String _extractDate(String dateCell) {
   return cleanDate;
 }
 
-ScheduleItem? _extractLessonData(List<Element> cells) {
+ScheduleItem? _extractLessonData(List<Element> cells, ParserColumns columns) {
   try {
-    if (cells.length < 6) return null;
+    if (cells.length < columns.requiredCount) return null;
 
-    final number = cells[2].text.trim();
-    final discipline = cells[3].text.trim();
-    final teacher = cells[4].text.trim();
-    final classroom = cells[5].text.trim();
-    final subgroup = cells.length > 6 ? cells[6].text.trim() : '';
+    final number = cells[columns.number].text.trim();
+    final discipline = cells[columns.subject].text.trim();
+    final teacher = cells[columns.teacher].text.trim();
+    final classroom = cells[columns.classroom].text.trim();
+    final subgroup = cells.length > columns.subgroup
+        ? cells[columns.subgroup].text.trim()
+        : '';
 
     if (number.isNotEmpty ||
         discipline.isNotEmpty ||

@@ -4,6 +4,7 @@ plugins {
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
     id("com.google.gms.google-services")
+    id("com.google.firebase.crashlytics")
 }
 
 import java.util.Properties
@@ -42,8 +43,8 @@ android {
         minSdk = 26
         // Google Play: с 31.08.2026 обновления должны быть собраны под Android 16 (API 36)
         targetSdk = 36
-        versionCode = 16
-        versionName = "1.0.12"
+        versionCode = 17
+        versionName = "1.0.13"
     }
 
     signingConfigs {
@@ -110,7 +111,8 @@ dependencies {
     implementation("com.google.android.play:asset-delivery-ktx:2.2.2")
     implementation("com.google.android.play:review:2.0.2")
     implementation("com.google.android.play:review-ktx:2.0.2")
-    
-    // Яндекс.Ads - обновляем версию, чтобы соответствовать Flutter-плагину
-    implementation("com.yandex.android:mobileads:7.12.0")
+
+    // Яндекс.Ads отдельно не подключаем: плагин yandex_mobileads объявляет
+    // com.yandex.android:mobileads своей версии сам. Прибитая здесь 7.12.0
+    // разошлась с плагином 8.4.0 и только вводила в заблуждение.
 }

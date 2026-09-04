@@ -6,6 +6,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 // ScrollCacheExtent объявлен в слое rendering и не реэкспортируется material.dart
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:provider/provider.dart';
@@ -25,6 +26,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../services/connectivity_service.dart';
 import '../services/date_service.dart';
+import '../services/remote_config_service.dart';
 import '../services/schedule_search.dart';
 
 class ScheduleScreen extends StatefulWidget {
@@ -41,6 +43,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   int _currentPage = 0;
   static const String _searchQueryKey = 'last_search_query';
   static const String _searchScopeKey = 'last_search_scope';
+  static const String _dismissedAnnouncementKey = 'dismissed_announcement';
+
+  /// Идентификатор объявления, которое пользователь уже закрыл.
+  String _dismissedAnnouncementId = '';
 
   /// Поле, которым ограничен поиск. null — искать по всем полям.
   ///
@@ -107,11 +113,104 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     final lastScope = EntityTypeLabel.fromStorage(
       prefs.getString(_searchScopeKey),
     );
+    final dismissed = prefs.getString(_dismissedAnnouncementKey) ?? '';
+
     setState(() {
       _searchQuery = lastQuery;
       _searchController.text = lastQuery;
       _searchScope = lastScope;
+      _dismissedAnnouncementId = dismissed;
     });
+  }
+
+  /// Объявление разработчика из удалённого конфига.
+  ///
+  /// Единственный способ что-то сказать всем пользователям, не выпуская
+  /// обновление: например, предупредить, что сайт колледжа переехал и нужна
+  /// новая версия. Закрытое объявление больше не показывается — до тех пор,
+  /// пока в конфиге не сменится идентификатор.
+  Widget _buildAnnouncement() {
+    final announcement = RemoteConfigService().config.announcement;
+    if (announcement.isEmpty || announcement.id == _dismissedAnnouncementId) {
+      return const SizedBox.shrink();
+    }
+
+    final theme = Theme.of(context);
+
+    return Card(
+      margin: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+      color: theme.colorScheme.secondaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              Icons.campaign_outlined,
+              size: 20,
+              color: theme.colorScheme.onSecondaryContainer,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    announcement.text,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSecondaryContainer,
+                    ),
+                  ),
+                  if (announcement.url.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: InkWell(
+                        onTap: () => _openAnnouncementUrl(announcement.url),
+                        child: Text(
+                          'Подробнее',
+                          style: theme.textTheme.labelLarge?.copyWith(
+                            color: theme.colorScheme.primary,
+                            decoration: TextDecoration.underline,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, size: 18),
+              tooltip: 'Скрыть',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => _dismissAnnouncement(announcement.id),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _dismissAnnouncement(String id) async {
+    setState(() => _dismissedAnnouncementId = id);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_dismissedAnnouncementKey, id);
+  }
+
+  Future<void> _openAnnouncementUrl(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+
+    try {
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (opened || !mounted) return;
+    } catch (e) {
+      debugPrint('Не удалось открыть ссылку объявления: $e');
+      if (!mounted) return;
+    }
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Не удалось открыть ссылку')));
   }
 
   void _onSearchChanged(
@@ -673,6 +772,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                 (Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    _buildAnnouncement(),
                     _buildSearchField(),
                     AnimatedSwitcher(
                       duration: const Duration(milliseconds: 300),

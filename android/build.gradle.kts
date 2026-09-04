@@ -5,6 +5,9 @@ buildscript {
     }
     dependencies {
         classpath("com.google.gms:google-services:4.4.2")
+        // Загружает mapping.txt R8 в Crashlytics, иначе стек-трейсы
+        // из релизной сборки нечитаемы.
+        classpath("com.google.firebase:firebase-crashlytics-gradle:3.0.6")
     }
 }
 
