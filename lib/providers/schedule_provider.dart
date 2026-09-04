@@ -259,10 +259,18 @@ class ScheduleProvider extends ChangeNotifier {
       }
 
       final shouldUpdate = await shouldUpdateSchedule();
-      if (shouldUpdate ||
-          _currentScheduleData == null ||
-          _currentScheduleData!.isEmpty) {
-        await updateSchedule(silent: true);
+      final nothingToShow =
+          _currentScheduleData == null || _currentScheduleData!.isEmpty;
+      if (shouldUpdate || nothingToShow) {
+        // Первая загрузка идёт с индикатором, а не молча.
+        //
+        // Разбор расписания всего колледжа на бюджетном телефоне занимает
+        // около минуты, и всё это время экран показывал «Нет данных» с
+        // кнопкой «Повторить загрузку»: приложение выглядело сломанным
+        // сразу после установки, а нажатие кнопки только начинало работу
+        // заново. Когда данные уже есть, обновление по-прежнему тихое —
+        // подменять готовое расписание спиннером незачем.
+        await updateSchedule(silent: !nothingToShow);
       } else {
         _isLoaded = true;
         _updateStatus(null);
