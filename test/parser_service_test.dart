@@ -259,4 +259,46 @@ void main() {
       expect(result.schedule, isNotEmpty);
     });
   });
+
+  group('область расписания для хэша', () {
+    // Сайт колледжа на Joomla подставляет в разметку csrf.token, который
+    // меняется на каждом запросе. Пока хэш считался по всей странице, он
+    // никогда не совпадал с прошлым, и разбор не пропускался ни разу.
+    String withToken(String token) =>
+        '<html><head><script>{"csrf.token":"$token"}</script></head>'
+        '<body><table><tr><td>03-сен</td></tr></table>'
+        '<footer>внизу</footer></body></html>';
+
+    test('меняющийся токен в шапке не меняет хэш', () {
+      final a = ParserService.scheduleRegion(utf8.encode(withToken('aaa')));
+      final b = ParserService.scheduleRegion(utf8.encode(withToken('bbb')));
+
+      expect(ParserService.hashForTest(a), ParserService.hashForTest(b));
+    });
+
+    test('изменение внутри таблицы хэш меняет', () {
+      final a = ParserService.scheduleRegion(
+        utf8.encode('<html><table><tr><td>Маркетинг</td></tr></table></html>'),
+      );
+      final b = ParserService.scheduleRegion(
+        utf8.encode('<html><table><tr><td>Химия</td></tr></table></html>'),
+      );
+
+      expect(ParserService.hashForTest(a), isNot(ParserService.hashForTest(b)));
+    });
+
+    test('берётся от первой таблицы до последней', () {
+      final region = ParserService.scheduleRegion(
+        utf8.encode('шапка<table>один</table>между<table>два</table>подвал'),
+      );
+
+      expect(utf8.decode(region), '<table>один</table>между<table>два</table>');
+    });
+
+    test('без таблиц возвращаются исходные байты', () {
+      final bytes = utf8.encode('<html><p>Расписания нет</p></html>');
+
+      expect(ParserService.scheduleRegion(bytes), bytes);
+    });
+  });
 }

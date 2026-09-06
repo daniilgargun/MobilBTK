@@ -125,9 +125,7 @@ class ParserService {
         return ParseResult.error('Ошибка загрузки: ${response.statusCode}');
       }
 
-      // bodyBytes, а не body: хэш считаем по исходным байтам, без накладных
-      // расходов на декодирование в строку.
-      final contentHash = _calculateHash(response.bodyBytes);
+      final contentHash = _calculateHash(scheduleRegion(response.bodyBytes));
 
       if (previousHash != null && previousHash == contentHash) {
         developer.log('📦 Расписание на сайте не изменилось, разбор пропущен');
@@ -207,6 +205,67 @@ class ParserService {
   /// Хэш содержимого страницы для тестов.
   @visibleForTesting
   static String hashForTest(List<int> bytes) => _calculateHash(bytes);
+
+  /// Байты страницы от первого `<table` до последнего `</table>`.
+  ///
+  /// Хэшировать всю страницу нельзя: сайт колледжа работает на Joomla, и в
+  /// разметке сидит `csrf.token`, который меняется на каждом запросе.
+  /// Из-за этого хэш никогда не совпадал с прошлым, `notModified` не
+  /// срабатывал ни разу, и каждая фоновая синхронизация — то есть каждые
+  /// 15 минут на каждом телефоне — заново разбирала все 172 КБ разметки.
+  /// Проверено на живой странице: три запроса подряд дали три разных хэша
+  /// страницы и один и тот же хэш этой области.
+  ///
+  /// Заодно область вдвое меньше самой страницы: расписание занимает 67 КБ
+  /// из 172, остальное — шапка, меню и подвал сайта.
+  ///
+  /// Поиск по байтам, а не разбор HTML: считать хэш дешевле, чем строить
+  /// дерево, ради чего вся эта проверка и существует. Если разметка
+  /// изменится и таблиц не окажется, возвращаются исходные байты — хуже,
+  /// чем было, не станет.
+  @visibleForTesting
+  static List<int> scheduleRegion(List<int> bytes) {
+    const open = '<table';
+    const close = '</table>';
+
+    final start = _indexOf(bytes, open, 0);
+    if (start < 0) return bytes;
+
+    final end = _lastIndexOf(bytes, close);
+    if (end < start) return bytes;
+
+    return bytes.sublist(start, end + close.length);
+  }
+
+  static int _indexOf(List<int> bytes, String needle, int from) {
+    final codes = needle.codeUnits;
+    for (var i = from; i <= bytes.length - codes.length; i++) {
+      var match = true;
+      for (var j = 0; j < codes.length; j++) {
+        if (bytes[i + j] != codes[j]) {
+          match = false;
+          break;
+        }
+      }
+      if (match) return i;
+    }
+    return -1;
+  }
+
+  static int _lastIndexOf(List<int> bytes, String needle) {
+    final codes = needle.codeUnits;
+    for (var i = bytes.length - codes.length; i >= 0; i--) {
+      var match = true;
+      for (var j = 0; j < codes.length; j++) {
+        if (bytes[i + j] != codes[j]) {
+          match = false;
+          break;
+        }
+      }
+      if (match) return i;
+    }
+    return -1;
+  }
 
   /// Хэш содержимого страницы.
   ///

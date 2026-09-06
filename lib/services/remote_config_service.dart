@@ -125,6 +125,14 @@ class AppConfig {
   /// Что нового — текст в диалоге обновления.
   final String updateNotes;
 
+  /// Подписываться ли на сообщения сторожа страницы (`PushService`).
+  ///
+  /// Сторож — отдельный сервис на стороне сервера, и он переживёт не всякую
+  /// смену бесплатных тарифов. Выключатель позволяет отказаться от подписки
+  /// без выпуска новой версии: приложение вернётся к опросу по таймеру,
+  /// который никуда не девался и продолжает работать всё это время.
+  final bool pushEnabled;
+
   const AppConfig({
     this.scheduleUrl = defaultScheduleUrl,
     this.columns = ParserColumns.defaults,
@@ -134,6 +142,7 @@ class AppConfig {
     this.latestVersion = '',
     this.minSupportedVersion = '',
     this.updateNotes = '',
+    this.pushEnabled = true,
   });
 
   static const String defaultScheduleUrl =
@@ -164,6 +173,7 @@ class RemoteConfigService {
   static const String _columnsKey = 'rc_parser_columns';
   static const String _bellKey = 'rc_bell_schedule';
   static const String _adsKey = 'rc_ads_enabled';
+  static const String _pushKey = 'rc_push_enabled';
   static const String _announcementKey = 'rc_announcement';
   static const String _latestVersionKey = 'rc_latest_version';
   static const String _minVersionKey = 'rc_min_supported_version';
@@ -190,6 +200,7 @@ class RemoteConfigService {
         columns: ParserColumns.fromJson(prefs.getString(_columnsKey) ?? ''),
         bellScheduleJson: prefs.getString(_bellKey) ?? '',
         adsEnabled: prefs.getBool(_adsKey) ?? true,
+        pushEnabled: prefs.getBool(_pushKey) ?? true,
         announcement: parseAnnouncement(prefs.getString(_announcementKey)),
         latestVersion: prefs.getString(_latestVersionKey) ?? '',
         minSupportedVersion: prefs.getString(_minVersionKey) ?? '',
@@ -222,6 +233,7 @@ class RemoteConfigService {
         'parser_columns': '',
         'bell_schedule': '',
         'ads_enabled': true,
+        'push_enabled': true,
         'announcement': '',
         'latest_version': '',
         'min_supported_version': '',
@@ -235,6 +247,7 @@ class RemoteConfigService {
       await prefs.setString(_columnsKey, remote.getString('parser_columns'));
       await prefs.setString(_bellKey, remote.getString('bell_schedule'));
       await prefs.setBool(_adsKey, remote.getBool('ads_enabled'));
+      await prefs.setBool(_pushKey, remote.getBool('push_enabled'));
       await prefs.setString(_announcementKey, remote.getString('announcement'));
       await prefs.setString(
         _latestVersionKey,

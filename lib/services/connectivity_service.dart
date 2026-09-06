@@ -131,11 +131,16 @@ class ConnectivityService {
   }
 
   // Выполняет фоновую синхронизацию при восстановлении связи
-  Future<void> _performBackgroundSync() async {
+  //
+  // [force] снимает проверку окна и интервала. Так синхронизация приходит
+  // по сообщению от сторожа страницы: он уже установил, что расписание
+  // изменилось, и ждать следующего окна незачем. Опрос по таймеру, наоборот,
+  // без этих проверок обходился бы дорого впустую.
+  Future<void> _performBackgroundSync({bool force = false}) async {
     if (_isSyncing) return;
 
     // Проверяем время синхронизации
-    if (!_canSyncNow()) {
+    if (!force && !_canSyncNow()) {
       debugPrint('⏰ Вне времени синхронизации или воскресенье');
       return;
     }
@@ -154,6 +159,7 @@ class ConnectivityService {
       }
 
       final shouldSync =
+          force ||
           _lastSyncTime == null ||
           now.difference(_lastSyncTime!).inMinutes >= syncIntervalMinutes;
 
@@ -208,6 +214,18 @@ class ConnectivityService {
     final service = ConnectivityService();
     await service.init();
     await service._performBackgroundSync();
+  }
+
+  /// Синхронизация по сообщению от сторожа страницы (`PushService`).
+  ///
+  /// Окно и интервал не проверяются: сторож присылает сообщение только
+  /// когда страница действительно изменилась, и только в рабочие часы —
+  /// повторять эти проверки на телефоне значит отложить уведомление до
+  /// следующего пробуждения по таймеру, ради которого всё и затевалось.
+  static Future<void> performPushSync() async {
+    final service = ConnectivityService();
+    await service.init();
+    await service._performBackgroundSync(force: true);
   }
 
   // Получает время последней синхронизации

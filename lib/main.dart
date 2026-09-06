@@ -20,6 +20,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flutter/foundation.dart';
@@ -44,6 +45,7 @@ import 'services/connectivity_service.dart';
 import 'services/crash_reporter.dart';
 import 'services/database_service.dart';
 import 'services/notification_service.dart';
+import 'services/push_service.dart';
 import 'services/remote_config_service.dart';
 import 'services/lesson_reminder_service.dart';
 import 'services/update_service.dart';
@@ -167,6 +169,24 @@ void main() {
 
       // Инициализация сервиса уведомлений
       await _step('уведомления', NotificationService().initialize);
+
+      // Сообщения сторожа страницы расписания.
+      //
+      // Обработчик фонового изолята регистрируется до runApp: сообщение может
+      // прийти, когда приложение не запущено, и тогда точка входа должна уже
+      // быть объявлена. Сама подписка — сетевой вызов, поэтому в фоне: старт
+      // приложения её не ждёт.
+      if (firebaseReady) {
+        await _step('сообщения сторожа', () async {
+          FirebaseMessaging.onBackgroundMessage(
+            firebaseMessagingBackgroundHandler,
+          );
+          FirebaseMessaging.onMessage.listen((message) {
+            PushService.handleMessage(message.data.cast<String, String>());
+          });
+        });
+        unawaited(PushService().initialize());
+      }
 
       // Профиль (своя группа или своя фамилия) и напоминания о парах.
       // Профиль нужен раньше расписания: по нему фильтруются уведомления.
