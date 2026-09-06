@@ -23,6 +23,8 @@ export interface Env {
   FIREBASE_PROJECT_ID: string;
   /** Целиком JSON сервисного аккаунта Firebase. Секрет, не переменная. */
   FCM_SERVICE_ACCOUNT: string;
+  /** Пароль ручной проверки. Не задан — `/check` выключен. */
+  CHECK_TOKEN?: string;
 }
 
 const HASH_KEY = 'page_hash';
@@ -44,15 +46,25 @@ export default {
   },
 
   /**
-   * Ручная проверка: `curl https://<воркер>/check`.
+   * Ручная проверка: `curl 'https://<воркер>/check?token=...'`.
    *
    * Ждать пятнадцать минут, чтобы понять, работает ли развёртывание,
    * невыносимо. Отдаёт то же, что записал бы в лог.
+   *
+   * Пароль обязателен: без него любой желающий мог бы дёргать этой ссылкой
+   * сайт колледжа сколько угодно раз. Пароль не задан — точка входа просто
+   * не существует, чтобы забытая настройка не оставляла её открытой.
    */
   async fetch(request: Request, env: Env): Promise<Response> {
-    const { pathname } = new URL(request.url);
-    if (pathname !== '/check') {
-      return new Response('БТК Расписание: сторож страницы. См. /check\n', {
+    const url = new URL(request.url);
+
+    const authorized =
+      Boolean(env.CHECK_TOKEN) &&
+      (url.searchParams.get('token') === env.CHECK_TOKEN ||
+        request.headers.get('Authorization') === `Bearer ${env.CHECK_TOKEN}`);
+
+    if (url.pathname !== '/check' || !authorized) {
+      return new Response('БТК Расписание: сторож страницы.\n', {
         status: 404,
       });
     }
@@ -67,7 +79,12 @@ export default {
 };
 
 type CheckResult = {
-  status: 'unchanged' | 'first-run' | 'notified' | 'download-failed';
+  status:
+    | 'unchanged'
+    | 'first-run'
+    | 'notified'
+    | 'download-failed'
+    | 'not-configured';
   hash?: string;
   httpStatus?: number;
 };
@@ -93,14 +110,21 @@ async function check(env: Env): Promise<CheckResult> {
     return { status: 'unchanged', hash };
   }
 
-  await env.STATE.put(HASH_KEY, hash);
-
   if (previous === null) {
     // Первый запуск после развёртывания: сравнивать не с чем. Если сейчас
     // разослать сообщение, все пользователи получат «расписание изменилось»
     // просто потому, что сервер поднялся.
+    await env.STATE.put(HASH_KEY, hash);
     console.log(`Первый запуск, запомнили хэш ${hash}`);
     return { status: 'first-run', hash };
+  }
+
+  if (!env.FCM_SERVICE_ACCOUNT) {
+    // Воркер развёрнут, а ключ ещё не положили. Хэш намеренно не
+    // запоминаем: иначе это изменение расписания пропало бы навсегда, и
+    // после появления ключа никто бы о нём не узнал.
+    console.log('Ключ сервисного аккаунта не задан, рассылка пропущена');
+    return { status: 'not-configured', hash };
   }
 
   const account = JSON.parse(env.FCM_SERVICE_ACCOUNT) as ServiceAccount;
@@ -112,6 +136,11 @@ async function check(env: Env): Promise<CheckResult> {
     topic: env.FCM_TOPIC,
     pageHash: hash,
   });
+
+  // Запоминаем только после успешной рассылки. Если FCM откажет или сеть
+  // подведёт, следующий запуск снова увидит изменение и повторит попытку —
+  // а не сочтёт, что об этом изменении уже сообщили.
+  await env.STATE.put(HASH_KEY, hash);
 
   console.log(`Страница изменилась (${previous} → ${hash}), разослано`);
   return { status: 'notified', hash };

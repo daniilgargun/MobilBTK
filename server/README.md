@@ -40,6 +40,20 @@ Cloudflare Worker, который раз в 15 минут смотрит на с
 `ParserService.scheduleRegion` и `src/page.ts` — зеркала друг друга,
 правятся вместе.
 
+## Текущее состояние
+
+Развёрнуто и работает:
+
+- отдельный аккаунт Cloudflare, не тот, где развёрнуто остальное;
+- адрес `https://btk-schedule-watcher.btk-schedule-watcher.workers.dev`;
+- расписание запусков и хранилище состояния созданы, страница читается,
+  хэш совпадает с тем, что считает приложение.
+
+**Не сделано:** не задан секрет `FCM_SERVICE_ACCOUNT`. Пока его нет,
+сторож видит изменения, но не рассылает — `/check` отвечает
+`not-configured`, и хэш в этом случае намеренно не запоминается, чтобы
+изменение не пропало. Как получить ключ — шаг 2 ниже.
+
 ## Развёртывание
 
 Воркер живёт на **отдельном аккаунте Cloudflare**. Ни идентификатора
@@ -87,6 +101,13 @@ npm install
 npx wrangler kv namespace create STATE
 ```
 
+Задать пароль ручной проверки — без него точка входа `/check` выключена,
+иначе любой желающий мог бы дёргать ею сайт колледжа:
+
+```bash
+npx wrangler secret put CHECK_TOKEN
+```
+
 Положить ключ сервисного аккаунта в секреты (целиком, как есть):
 
 ```bash
@@ -103,7 +124,7 @@ npm run deploy
 Проверить, не дожидаясь следующего запуска по расписанию:
 
 ```bash
-curl https://btk-schedule-watcher.<поддомен>.workers.dev/check
+curl 'https://btk-schedule-watcher.<поддомен>.workers.dev/check?token=<CHECK_TOKEN>'
 ```
 
 Первый ответ будет `{"status":"first-run"}` — сравнивать не с чем,
@@ -112,7 +133,9 @@ curl https://btk-schedule-watcher.<поддомен>.workers.dev/check
 
 - `unchanged` — страница та же;
 - `notified` — изменилась, сообщение разослано;
-- `download-failed` — сайт колледжа не ответил.
+- `not-configured` — изменилась, но ключ Firebase не задан;
+- `download-failed` — сайт колледжа не ответил. Разовые пятисотки от
+  bartc.by случаются, следующий запуск повторит попытку.
 
 Живой лог: `npm run tail`.
 

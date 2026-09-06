@@ -11,15 +11,17 @@ import { hashRegion, scheduleRegion } from '../src/page';
  * отличались ровно одной строкой — той, где этот токен, — поэтому хранить
  * их все смысла нет, а полмегабайта чужой разметки в репозитории лишние.
  */
-const original = readFileSync(
-  fileURLToPath(new URL('./fixtures/schedule-page.html', import.meta.url)),
+const page = new Uint8Array(
+  readFileSync(
+    fileURLToPath(new URL('./fixtures/schedule-page.html', import.meta.url)),
+  ),
 );
 
-const page = new Uint8Array(original);
+const text = new TextDecoder().decode(page);
+
+/** Тот же снимок с другим значением csrf.token — как при втором запросе. */
 const withOtherToken = new TextEncoder().encode(
-  original
-    .toString('utf8')
-    .replace(/"csrf\.token":"[0-9a-f]+"/, '"csrf.token":"0".repeat'),
+  text.replace(/"csrf\.token":"[0-9a-f]+"/, '"csrf.token":"deadbeef"'),
 );
 
 const sha256 = async (bytes: Uint8Array) => {
@@ -31,7 +33,7 @@ const sha256 = async (bytes: Uint8Array) => {
 
 describe('снимок настоящей страницы', () => {
   test('в снимке действительно есть меняющийся токен', () => {
-    expect(original.toString('utf8')).toMatch(/"csrf\.token":"[0-9a-f]+"/);
+    expect(text).toMatch(/"csrf\.token":"[0-9a-f]+"/);
   });
 
   test('смена токена не меняет хэш области', async () => {
