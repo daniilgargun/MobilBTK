@@ -129,12 +129,16 @@ class BellScheduleRemoteViewsFactory(private val context: Context) : RemoteViews
             val calendar = Calendar.getInstance()
             val dayOfWeek = calendar.get(Calendar.DAY_OF_WEEK)
             
+            // Воскресенье — не учебный день, и страницы у него нет. Раньше
+            // оно попадало в ветку по умолчанию вместе с Пн/Ср/Пт, и виджет
+            // подсвечивал «идущую» пару на понедельничной сетке: выглядело
+            // так, будто в воскресенье идут занятия.
             val currentDayPageIndex = when (dayOfWeek) {
                 Calendar.MONDAY, Calendar.WEDNESDAY, Calendar.FRIDAY -> 0
                 Calendar.TUESDAY -> 1
                 Calendar.THURSDAY -> 2
                 Calendar.SATURDAY -> 3
-                else -> 0 
+                else -> -1
             }
             
             var isActive = false

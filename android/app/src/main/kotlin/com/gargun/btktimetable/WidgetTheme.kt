@@ -169,7 +169,8 @@ object WidgetUpdateScheduler {
             val raw = HomeWidgetPlugin.getData(context)
                 .getString("bell_schedule_templates", "{}") ?: "{}"
             val templates = JSONObject(raw)
-            val items = templates.optJSONArray(todayDayType()) ?: return emptyList()
+            val dayType = todayDayType() ?: return emptyList()
+            val items = templates.optJSONArray(dayType) ?: return emptyList()
 
             val result = sortedSetOf<Int>()
             for (i in 0 until items.length()) {
@@ -183,11 +184,19 @@ object WidgetUpdateScheduler {
         }
     }
 
-    private fun todayDayType(): String = when (Calendar.getInstance()
+    /**
+     * Тип сегодняшнего дня в терминах расписания звонков, либо null в
+     * воскресенье: пар нет, а значит нет и границ, на которые стоило бы
+     * будить виджет. Раньше воскресенье попадало в ветку по умолчанию и
+     * получало сетку понедельника — два десятка лишних пробуждений за день,
+     * каждое из которых ничего не меняло.
+     */
+    private fun todayDayType(): String? = when (Calendar.getInstance()
         .get(Calendar.DAY_OF_WEEK)) {
         Calendar.TUESDAY -> "tuesday"
         Calendar.THURSDAY -> "thursday"
         Calendar.SATURDAY -> "saturday"
+        Calendar.SUNDAY -> null
         else -> "normal"
     }
 }

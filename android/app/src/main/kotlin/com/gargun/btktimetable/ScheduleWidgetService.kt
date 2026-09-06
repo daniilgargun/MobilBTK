@@ -18,12 +18,24 @@ class ScheduleRemoteViewsFactory(private val context: Context) : RemoteViewsServ
     private var scheduleItems: JSONArray = JSONArray()
     private var widgetColor: Int = android.graphics.Color.BLUE // Default fallback
 
+    /**
+     * Показывает ли виджет сегодняшний день.
+     *
+     * Подсветка идущей пары сравнивает её время с текущим, и без этой
+     * проверки она загоралась и на чужом дне: вечером, когда пары кончились,
+     * виджет показывает следующий учебный день, а «сейчас 10:20» попадает в
+     * диапазон второй пары. В воскресенье так подсвечивался понедельник —
+     * виджет выглядел так, будто идут занятия.
+     */
+    private var showsToday: Boolean = false
+
     override fun onCreate() {}
 
     override fun onDataSetChanged() {
         val widgetData = HomeWidgetPlugin.getData(context)
         val jsonString = widgetData.getString("schedule_data", "[]")
         widgetColor = WidgetTheme.accentColor(context)
+        showsToday = widgetData.getBoolean("schedule_shows_today", false)
 
         android.util.Log.d("ScheduleWidgetService", "JSON Data: $jsonString")
         scheduleItems = try {
@@ -145,6 +157,7 @@ class ScheduleRemoteViewsFactory(private val context: Context) : RemoteViewsServ
     }
 
     private fun isCurrentLesson(timeString: String): Boolean {
+        if (!showsToday) return false
         if (timeString.isEmpty()) return false
         try {
             val parts = timeString.split(" - ")

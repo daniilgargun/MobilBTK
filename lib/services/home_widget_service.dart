@@ -229,7 +229,15 @@ class HomeWidgetService {
     // Определяем заголовок виджета (например, номер группы)
     final widgetTitle = searchQuery.isNotEmpty ? searchQuery : 'Мое расписание';
 
+    // Виджет подсвечивает идущую пару, сравнивая её время с текущим. Без
+    // этого признака он подсвечивал и завтрашний день: вечером, когда пары
+    // закончились, виджет показывает следующий учебный день, а «сейчас
+    // 10:20» попадает в диапазон второй пары — и она загоралась, как будто
+    // идёт. В воскресенье так подсвечивался понедельник.
+    final showsToday = DateService.isSameDay(date, DateTime.now());
+
     await HomeWidget.saveWidgetData<String>('schedule_data', lessonsJson);
+    await HomeWidget.saveWidgetData<bool>('schedule_shows_today', showsToday);
     await HomeWidget.saveWidgetData<String>('schedule_date', title);
     await HomeWidget.saveWidgetData<String>('widget_title', widgetTitle);
     await HomeWidget.saveWidgetData<String>(
