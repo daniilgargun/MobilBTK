@@ -14,6 +14,7 @@ import '../models/lesson_time_model.dart';
 import 'connectivity_service.dart';
 import 'crash_reporter.dart';
 import 'lesson_reminder_service.dart';
+import 'release_logging.dart';
 import 'remote_config_service.dart';
 import 'user_profile_service.dart';
 
@@ -106,6 +107,10 @@ class PushService {
 /// поднимается заново, ровно как в `callbackDispatcher`.
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  // Изолят со своей точкой входа: `main()` здесь не выполняется, поэтому
+  // заглушку логов надо ставить заново.
+  silenceRoutineLogsInRelease();
+
   try {
     // Тот же набор, что поднимает `callbackDispatcher`: изолят создаётся с
     // нуля, и без него не работают ни планировщик напоминаний (временны́е
@@ -122,7 +127,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
     await PushService.handleMessage(message.data.cast<String, String>());
   } catch (e, stack) {
-    debugPrint('❌ Ошибка обработки сообщения в фоне: $e');
+    logError('Ошибка обработки сообщения в фоне', e, stack);
     CrashReporter.report(e, stack);
   }
 }

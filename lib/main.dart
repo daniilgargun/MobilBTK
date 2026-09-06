@@ -46,6 +46,7 @@ import 'services/crash_reporter.dart';
 import 'services/database_service.dart';
 import 'services/notification_service.dart';
 import 'services/push_service.dart';
+import 'services/release_logging.dart';
 import 'services/remote_config_service.dart';
 import 'services/lesson_reminder_service.dart';
 import 'services/update_service.dart';
@@ -69,28 +70,15 @@ Future<void> _step(String name, Future<void> Function() body) async {
   try {
     await body();
   } catch (e, stack) {
-    _logError('Шаг запуска «$name» не выполнен', e, stack);
+    logError('Шаг запуска «$name» не выполнен', e, stack);
     CrashReporter.report(e, stack);
   }
 }
 
-/// Печатает ошибку в обход заглушённого `debugPrint`.
-///
-/// В release `debugPrint` заменяется пустой функцией, чтобы рутинные логи не
-/// оседали в logcat. Сообщения об ошибках исчезали вместе с ними, поэтому
-/// падение при запуске выглядело как молчащий чёрный экран.
-/// `developer.log` тут не подходит: в AOT-сборке он до logcat не доходит.
-void _logError(String message, Object error, StackTrace? stack) {
-  debugPrintSynchronously('❌ $message: $error');
-  if (stack != null) debugPrintSynchronously(stack.toString());
-}
-
 void main() {
   // Сотня точек логирования писала в logcat, где их мог прочитать кто угодно.
-  // Ошибки это не глушит: они идут через [_logError] мимо `debugPrint`.
-  if (kReleaseMode) {
-    debugPrint = (String? message, {int? wrapWidth}) {};
-  }
+  // Ошибки это не глушит: они идут через [logError] мимо `debugPrint`.
+  silenceRoutineLogsInRelease();
 
   // Используем runZonedGuarded для перехвата всех необработанных ошибок
   runZonedGuarded(
@@ -137,7 +125,7 @@ void main() {
         // Игнорируем специфическую ошибку OpenGL, которая не является критической
         if (details.toString().contains('OpenGL ES API')) return;
 
-        _logError(
+        logError(
           'Перехвачена ошибка Flutter',
           details.exception,
           details.stack,
@@ -149,7 +137,7 @@ void main() {
       // Ошибки, до которых Flutter не дотягивается: колбэки платформы и
       // необработанные Future вне зоны runZonedGuarded.
       PlatformDispatcher.instance.onError = (error, stack) {
-        _logError('Необработанная ошибка платформы', error, stack);
+        logError('Необработанная ошибка платформы', error, stack);
         CrashReporter.report(error, stack, fatal: true);
         return true;
       };
@@ -266,7 +254,7 @@ void main() {
     },
     (error, stack) {
       // Логируем ошибки, которые не были пойманы Flutter
-      _logError('Неперехваченная ошибка зоны', error, stack);
+      logError('Неперехваченная ошибка зоны', error, stack);
       CrashReporter.report(error, stack, fatal: true);
     },
   );
@@ -275,6 +263,10 @@ void main() {
 // Обработчик фоновых задач для workmanager
 @pragma('vm:entry-point')
 void callbackDispatcher() {
+  // Отдельный изолят со своей точкой входа: `main()` здесь не выполняется,
+  // поэтому заглушку логов надо ставить заново.
+  silenceRoutineLogsInRelease();
+
   Workmanager().executeTask((task, inputData) async {
     debugPrint('🔄 Выполнение фоновой задачи: $task');
 
