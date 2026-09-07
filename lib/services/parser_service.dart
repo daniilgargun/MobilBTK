@@ -32,6 +32,14 @@ class ParseResult {
   /// а не про поломку приложения.
   final bool networkFailure;
 
+  /// Сайт ответил, но ошибкой: 5xx, 429 и прочее временное.
+  ///
+  /// Это не поломка разбора и не отсутствие связи. Сайт колледжа — небольшая
+  /// Joomla на PHP, и пятисотки он отдаёт время от времени и телефонам, и
+  /// серверу; проверено на устройстве. Слать такое в Crashlytics
+  /// бессмысленно: настоящая поломка разбора утонула бы в этом шуме.
+  final bool siteUnavailable;
+
   /// Страница загрузилась и разобралась, но расписания в ней нет.
   ///
   /// Это не ошибка. На каникулах и между семестрами колледж просто ничего
@@ -50,6 +58,7 @@ class ParseResult {
     this.notModified = false,
     this.noSchedule = false,
     this.networkFailure = false,
+    this.siteUnavailable = false,
   });
 
   /// Расписания на странице нет.
@@ -61,16 +70,20 @@ class ParseResult {
       contentHash = hash,
       notModified = false,
       noSchedule = true,
-      networkFailure = false;
+      networkFailure = false,
+      siteUnavailable = false;
 
-  const ParseResult.error(String message, {this.networkFailure = false})
-    : schedule = const {},
-      groups = const [],
-      teachers = const [],
-      error = message,
-      contentHash = null,
-      notModified = false,
-      noSchedule = false;
+  const ParseResult.error(
+    String message, {
+    this.networkFailure = false,
+    this.siteUnavailable = false,
+  }) : schedule = const {},
+       groups = const [],
+       teachers = const [],
+       error = message,
+       contentHash = null,
+       notModified = false,
+       noSchedule = false;
 }
 
 /// Загружает и разбирает расписание с сайта колледжа.
@@ -117,12 +130,18 @@ class ParserService {
     final config = RemoteConfigService().config;
 
     try {
-      final response = await http
-          .get(Uri.parse(config.scheduleUrl), headers: _headers)
-          .timeout(_requestTimeout);
+      final response = await _get(config.scheduleUrl);
 
       if (response.statusCode != 200) {
-        return ParseResult.error('Ошибка загрузки: ${response.statusCode}');
+        // 5xx и 429 — сайт жив, но сейчас не может ответить. Это не поломка
+        // разбора: пятисотки от bartc.by ловились и на телефоне, и на
+        // сервере. Всё остальное (403, 404) — уже повод разбираться.
+        final temporary =
+            response.statusCode >= 500 || response.statusCode == 429;
+        return ParseResult.error(
+          'Ошибка загрузки: ${response.statusCode}',
+          siteUnavailable: temporary,
+        );
       }
 
       final contentHash = _calculateHash(scheduleRegion(response.bodyBytes));
@@ -200,6 +219,36 @@ class ParserService {
       groups: parsed.groups,
       teachers: parsed.teachers,
     );
+  }
+
+  /// Сколько раз пробовать, если сайт ответил ошибкой.
+  ///
+  /// Сайт колледжа отдаёт пятисотки время от времени, и без повтора одна
+  /// такая съедала бы весь заход: после сообщения сторожа приложение больше
+  /// не вернётся к этому изменению — сторож шлёт по одному сообщению на
+  /// изменение, — и новость дождалась бы только опроса по таймеру.
+  static const int _attempts = 3;
+  static const Duration _retryDelay = Duration(seconds: 3);
+
+  Future<http.Response> _get(String url) async {
+    http.Response? last;
+
+    for (var attempt = 1; attempt <= _attempts; attempt++) {
+      final response = await http
+          .get(Uri.parse(url), headers: _headers)
+          .timeout(_requestTimeout);
+
+      // Повторяем только временное. На 403 и 404 повтор ничего не изменит,
+      // а задержит ответ пользователю на лишние секунды.
+      if (response.statusCode < 500 && response.statusCode != 429) {
+        return response;
+      }
+
+      last = response;
+      if (attempt < _attempts) await Future.delayed(_retryDelay);
+    }
+
+    return last!;
   }
 
   /// Хэш содержимого страницы для тестов.
