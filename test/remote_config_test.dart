@@ -105,4 +105,50 @@ void main() {
       expect(announcement.isEmpty, isFalse);
     });
   });
+
+  group('выключатели из консоли', () {
+    // getBool в Remote Config считает истиной только «true», «1», «yes»,
+    // «t», «on». Пустая строка, «False» с заглавной, лишний пробел, ключ,
+    // заведённый числом — всё это для него ложь. Так push_enabled и
+    // выключился: приложение молча отписалось от уведомлений.
+    bool flag(String raw) => RemoteConfigService.readFlag(raw, fallback: true);
+
+    test('пустое значение — это значение по умолчанию', () {
+      expect(flag(''), isTrue);
+      expect(flag('   '), isTrue);
+      expect(RemoteConfigService.readFlag('', fallback: false), isFalse);
+    });
+
+    test('непонятное значение — тоже по умолчанию', () {
+      expect(flag('включено'), isTrue);
+      expect(flag('{"enabled":true}'), isTrue);
+      expect(flag('42'), isTrue);
+      expect(RemoteConfigService.readFlag('мусор', fallback: false), isFalse);
+    });
+
+    test('выключает только явное «нет»', () {
+      for (final value in [
+        'false',
+        'False',
+        ' FALSE ',
+        '0',
+        'no',
+        'off',
+        'нет',
+        'выкл',
+      ]) {
+        expect(flag(value), isFalse, reason: value);
+      }
+    });
+
+    test('включает явное «да»', () {
+      for (final value in ['true', 'True', ' 1 ', 'yes', 'on', 'да']) {
+        expect(
+          RemoteConfigService.readFlag(value, fallback: false),
+          isTrue,
+          reason: value,
+        );
+      }
+    });
+  });
 }

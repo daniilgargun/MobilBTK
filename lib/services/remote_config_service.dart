@@ -213,6 +213,34 @@ class RemoteConfigService {
     return _current;
   }
 
+  /// Разбирает выключатель из консоли, не веря `getBool`.
+  ///
+  /// `getBool` считает истиной только «true», «1», «yes», «t», «on» — а всё
+  /// остальное ложью: пустую строку, «False» с заглавной, случайный пробел,
+  /// ключ, заведённый числом или JSON. То есть опечатка в консоли молча
+  /// выключала бы функцию у всех сразу, а вернуть её можно было бы только
+  /// заметив, что она пропала.
+  ///
+  /// Так и вышло: `push_enabled` в консоли получил значение, которое
+  /// `getBool` истиной не счёл, приложение отписалось от темы сторожа и
+  /// перестало получать уведомления — молча, без единого следа.
+  ///
+  /// Поэтому выключателем считается только явно написанное «нет». Всё
+  /// непонятное — это вшитое значение по умолчанию, как и у остальных
+  /// ключей конфига.
+  @visibleForTesting
+  static bool readFlag(String raw, {required bool fallback}) {
+    final value = raw.trim().toLowerCase();
+    if (value.isEmpty) return fallback;
+
+    const yes = {'true', '1', 'yes', 'y', 't', 'on', 'да', 'вкл'};
+    const no = {'false', '0', 'no', 'n', 'f', 'off', 'нет', 'выкл'};
+
+    if (yes.contains(value)) return true;
+    if (no.contains(value)) return false;
+    return fallback;
+  }
+
   /// Забирает свежие значения из Firebase и сохраняет их.
   ///
   /// Любая ошибка (нет сети, нет `google-services.json`, отключённый проект)
@@ -246,8 +274,14 @@ class RemoteConfigService {
       await prefs.setString(_urlKey, remote.getString('schedule_url'));
       await prefs.setString(_columnsKey, remote.getString('parser_columns'));
       await prefs.setString(_bellKey, remote.getString('bell_schedule'));
-      await prefs.setBool(_adsKey, remote.getBool('ads_enabled'));
-      await prefs.setBool(_pushKey, remote.getBool('push_enabled'));
+      await prefs.setBool(
+        _adsKey,
+        readFlag(remote.getValue('ads_enabled').asString(), fallback: true),
+      );
+      await prefs.setBool(
+        _pushKey,
+        readFlag(remote.getValue('push_enabled').asString(), fallback: true),
+      );
       await prefs.setString(_announcementKey, remote.getString('announcement'));
       await prefs.setString(
         _latestVersionKey,
